@@ -1,0 +1,37 @@
+[package]
+name = "society-server"
+version = "0.1.0"
+edition = "2021"
+description = "Axum-based WebSocket server for ZeroClaw AI Society"
+
+[dependencies]
+society-core = { path = "../society-core" }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# HTTP / WebSocket framework
+axum = { version = "0.8", features = ["ws"] }
+
+# Stream utilities for WebSocket split
+futures-util = "0.3"
+
+# Serialization
+serde_json = "1"
+
+# Observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# CORS support
+tower-http = { version = "0.6", features = ["cors"] }
+
+# ZeroClaw agent framework (reserved for Phase 2+)
+# NOTE: zero-claw v0.1.1 is a binary crate — no lib target.
+# We reference it here as a reminder; actual integration will use its API directly.
+# zero-claw = "0.1"
+
+[dev-dependencies]
+tower = "0.5"
+reqwest = { version = "0.12", features = ["json"] }
+tokio-tungstenite = "0.26"

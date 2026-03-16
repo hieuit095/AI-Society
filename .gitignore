@@ -99,6 +99,9 @@ playwright/.cache/
 # System Files
 Thumbs.db
 
+# Rust build artifacts
+/target
+
 # Log files for AI plugins/extensions if any
 .gemini/
 .antigravity/

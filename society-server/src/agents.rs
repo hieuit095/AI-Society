@@ -92,6 +92,7 @@ const SOUL_CONSTRAINTS: &str = include_str!("../prompts/SOUL.md");
 /// │  SOUL.md (shared)                        │  ← Compile-time embed
 /// │  Authorized tools                        │  ← From RoleProfile
 /// │  Recent Channel Activity (optional)      │  ← Social Fabric Phase 2
+/// │  Active Roster (optional)                │  ← Social Fabric Phase 3
 /// │  Relationship Memory (optional)          │  ← Social Fabric Phase 4
 /// │  Per-agent delta (optional)              │  ← Agent-specific overrides
 /// └───────────────────────────────────────────┘
@@ -113,6 +114,11 @@ pub struct AssembledPrompt {
 /// When `recent_channel_activity` is `Some`, a transcript of the last N messages
 /// from the agent's subscribed channel is injected into the prompt.
 ///
+/// ## Social Fabric (Phase 3)
+///
+/// When `active_roster` is `Some`, a list of peers currently present in the
+/// channel is injected so the LLM knows whom it can address via `@AGT-XXX`.
+///
 /// ## Social Fabric (Phase 4)
 ///
 /// When `relationship_context` is `Some`, past interactions with the peer who
@@ -121,9 +127,10 @@ pub fn assemble_prompt(
     profile: &RoleProfile,
     agent_delta: Option<&str>,
     recent_channel_activity: Option<&str>,
+    active_roster: Option<&str>,
     relationship_context: Option<&str>,
 ) -> AssembledPrompt {
-    let mut parts: Vec<&str> = Vec::with_capacity(8);
+    let mut parts: Vec<&str> = Vec::with_capacity(9);
 
     // Layer 1: Shared identity preamble (from prompts/IDENTITY.md)
     parts.push(IDENTITY_PREAMBLE);
@@ -144,6 +151,16 @@ pub fn assemble_prompt(
     if let Some(activity) = recent_channel_activity {
         activity_section = format!("## Recent Channel Activity\n{}", activity);
         parts.push(&activity_section);
+    }
+
+    // Layer 5.5: Active roster (Social Fabric Phase 3 — peer awareness)
+    let roster_section;
+    if let Some(roster) = active_roster {
+        roster_section = format!(
+            "## Active Roster\nPresent in channel: {}\nTo address a peer directly, use their exact tag (e.g., @AGT-012).",
+            roster
+        );
+        parts.push(&roster_section);
     }
 
     // Layer 6: Relationship memory (Social Fabric Phase 4)
@@ -197,7 +214,7 @@ impl AgentRuntime {
     pub fn spawn(id: AgentId, name: String, role: AgentRole) -> Self {
         let profile = RoleProfile::default_for(role);
         let provider = ProviderRoute::from_tier(profile.tier);
-        let prompt = assemble_prompt(&profile, None, None, None);
+        let prompt = assemble_prompt(&profile, None, None, None, None);
 
         Self {
             id,
@@ -357,7 +374,7 @@ mod tests {
     #[test]
     fn prompt_assembly_includes_role() {
         let profile = RoleProfile::default_for(AgentRole::Ceo);
-        let prompt = assemble_prompt(&profile, None, None, None);
+        let prompt = assemble_prompt(&profile, None, None, None, None);
         assert!(prompt.system_prompt.contains("CEO Agent"));
         assert!(prompt.system_prompt.contains("strategy"));
     }
@@ -365,7 +382,13 @@ mod tests {
     #[test]
     fn prompt_assembly_includes_delta() {
         let profile = RoleProfile::default_for(AgentRole::Engineer);
-        let prompt = assemble_prompt(&profile, Some("Focus on security patches."), None, None);
+        let prompt = assemble_prompt(
+            &profile,
+            Some("Focus on security patches."),
+            None,
+            None,
+            None,
+        );
         assert!(prompt.system_prompt.contains("Focus on security patches."));
     }
 
@@ -373,7 +396,7 @@ mod tests {
     fn prompt_assembly_includes_channel_activity() {
         let profile = RoleProfile::default_for(AgentRole::Analyst);
         let transcript = "[AGT-001] CEO: Budget approved.\n[AGT-042] CTO: Deploy the fix.";
-        let prompt = assemble_prompt(&profile, None, Some(transcript), None);
+        let prompt = assemble_prompt(&profile, None, Some(transcript), None, None);
         assert!(prompt.system_prompt.contains("## Recent Channel Activity"));
         assert!(prompt.system_prompt.contains("Budget approved."));
     }
@@ -381,7 +404,7 @@ mod tests {
     #[test]
     fn prompt_assembly_omits_activity_when_none() {
         let profile = RoleProfile::default_for(AgentRole::Analyst);
-        let prompt = assemble_prompt(&profile, None, None, None);
+        let prompt = assemble_prompt(&profile, None, None, None, None);
         assert!(!prompt.system_prompt.contains("## Recent Channel Activity"));
     }
 
@@ -389,7 +412,7 @@ mod tests {
     fn prompt_assembly_includes_relationship_context() {
         let profile = RoleProfile::default_for(AgentRole::Engineer);
         let context = "[Tick 5] CEO Agent: We discussed the budget.";
-        let prompt = assemble_prompt(&profile, None, None, Some(context));
+        let prompt = assemble_prompt(&profile, None, None, None, Some(context));
         assert!(prompt.system_prompt.contains("## Relationship Memory"));
         assert!(prompt.system_prompt.contains("budget"));
     }
@@ -397,7 +420,7 @@ mod tests {
     #[test]
     fn prompt_assembly_omits_relationship_when_none() {
         let profile = RoleProfile::default_for(AgentRole::Engineer);
-        let prompt = assemble_prompt(&profile, None, None, None);
+        let prompt = assemble_prompt(&profile, None, None, None, None);
         assert!(!prompt.system_prompt.contains("## Relationship Memory"));
     }
 

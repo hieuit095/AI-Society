@@ -183,12 +183,16 @@ function handleServerEvent(envelope: Envelope<Record<string, unknown>>): void {
             break;
 
         case 'graphSnapshot': {
-            const nodes = payload.nodes as Array<{
-                id: string; name: string; val: number; group: string; status: string;
-            }>;
-            const links = payload.links as Array<{ source: string; target: string }>;
-            if (nodes && links) {
-                store.hydrateGraph({ nodes, links });
+            // Server nests graph data under `payload.data` per events.rs GraphSnapshot { data }
+            const graphData = payload.data as Record<string, unknown> | undefined;
+            if (graphData) {
+                const nodes = graphData.nodes as Array<{
+                    id: string; name: string; val: number; group: string; status: string;
+                }>;
+                const links = graphData.links as Array<{ source: string; target: string }>;
+                if (nodes && links) {
+                    store.hydrateGraph({ nodes, links });
+                }
             }
             break;
         }
@@ -225,21 +229,28 @@ function handleServerEvent(envelope: Envelope<Record<string, unknown>>): void {
             });
             break;
 
-        case 'seedApplied':
+        case 'seedApplied': {
             console.log('[WS] Seed applied:', payload.seedId, payload.title);
-            store.handleSeedApplied({
-                id: payload.id as string,
-                agentId: payload.agentId as string,
-                agentName: payload.agentName as string,
-                agentRole: payload.agentRole as string,
-                agentRoleColor: payload.agentRoleColor as string,
-                agentAvatarInitials: payload.agentAvatarInitials as string,
-                content: payload.content as string,
-                timestamp: payload.timestamp as string,
-                tick: 0,
-                isSystemMessage: true,
-            });
+            // Server nests the system message under `payload.systemMessage` per events.rs SeedApplied
+            const sysMsg = payload.systemMessage as Record<string, unknown> | undefined;
+            if (sysMsg) {
+                store.handleSeedApplied({
+                    id: sysMsg.id as string,
+                    agentId: sysMsg.agentId as string,
+                    agentName: sysMsg.agentName as string,
+                    agentRole: sysMsg.agentRole as string,
+                    agentRoleColor: sysMsg.agentRoleColor as string,
+                    agentAvatarInitials: sysMsg.agentAvatarInitials as string,
+                    content: sysMsg.content as string,
+                    timestamp: sysMsg.timestamp as string,
+                    tick: (sysMsg.tick as number) ?? 0,
+                    isSystemMessage: true,
+                });
+            } else {
+                console.warn('[WS] seedApplied event missing systemMessage payload');
+            }
             break;
+        }
 
         case 'echo':
             console.log('[WS] Echo:', payload.message);

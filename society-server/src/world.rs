@@ -297,14 +297,21 @@ fn cached_transcript<'a>(
 fn build_speaker_slot(
     agent: &AgentRuntime,
     channel_transcript: Option<&str>,
+    active_roster: Option<&str>,
     slot_index: u64,
     drift_seed: &mut u64,
 ) -> Option<SpeakerSlot> {
     let role_name = agent.profile.role.display_name();
     let channel = channel_for_role(role_name);
 
-    // Assemble the dynamic prompt with pre-cached channel context
-    let dynamic_prompt = assemble_prompt(&agent.profile, None, channel_transcript, None);
+    // Assemble the dynamic prompt with pre-cached channel context + roster
+    let dynamic_prompt = assemble_prompt(
+        &agent.profile,
+        None,
+        channel_transcript,
+        active_roster,
+        None,
+    );
 
     // Deterministic fallback index
     *drift_seed = drift_seed
@@ -419,6 +426,24 @@ pub fn spawn_tick_loop(world: SharedWorld, tx: EventTx, memory: SharedMemory) {
                     // channel, regardless of how many speakers share it.
                     let mut transcript_cache: HashMap<String, String> = HashMap::new();
 
+                    // ── Per-channel roster cache ──────────────────────────
+                    // Formatted lists of awake peers per channel, built once.
+                    let mut roster_cache: HashMap<String, String> = HashMap::new();
+                    for a in &state.agents {
+                        if a.status.is_awake() {
+                            let ch = channel_for_role(a.profile.role.display_name()).to_string();
+                            let entry = roster_cache.entry(ch).or_default();
+                            if !entry.is_empty() {
+                                entry.push_str(", ");
+                            }
+                            entry.push_str(&format!(
+                                "@{} ({})",
+                                a.id.as_str(),
+                                a.profile.role.display_name()
+                            ));
+                        }
+                    }
+
                     // ── Step 1: Drain mention_queue for priority speakers ──
                     let mut remaining_queue: VecDeque<(String, u64)> = VecDeque::new();
                     while let Some((mentioned_id, expiry)) = state.mention_queue.pop_front() {
@@ -446,9 +471,11 @@ pub fn spawn_tick_loop(world: SharedWorld, tx: EventTx, memory: SharedMemory) {
                                     ch,
                                     &state.channel_history,
                                 );
+                                let roster = roster_cache.get(ch).map(|s| s.as_str());
                                 if let Some(mut slot) = build_speaker_slot(
                                     agent,
                                     transcript,
+                                    roster,
                                     slot_counter,
                                     &mut drift_seed,
                                 ) {
@@ -492,9 +519,14 @@ pub fn spawn_tick_loop(world: SharedWorld, tx: EventTx, memory: SharedMemory) {
                         let ch = channel_for_role(agent.profile.role.display_name());
                         let transcript =
                             cached_transcript(&mut transcript_cache, ch, &state.channel_history);
-                        if let Some(slot) =
-                            build_speaker_slot(agent, transcript, slot_counter, &mut drift_seed)
-                        {
+                        let roster = roster_cache.get(ch).map(|s| s.as_str());
+                        if let Some(slot) = build_speaker_slot(
+                            agent,
+                            transcript,
+                            roster,
+                            slot_counter,
+                            &mut drift_seed,
+                        ) {
                             selected_ids.insert(agent_id_str);
                             speaker_contexts.push(slot);
                             slot_counter += 1;
@@ -661,16 +693,36 @@ pub fn spawn_tick_loop(world: SharedWorld, tx: EventTx, memory: SharedMemory) {
 
             // ── Broadcast chat messages + build memory entries ──
             let mut mem_entries: Vec<(String, String, String)> =
-                Vec::with_capacity(chat_messages.len());
+                Vec::with_capacity(chat_messages.len() * 2);
             let seed_for_mem = snapshot.seed_id.clone();
             let mut history_inserts: Vec<(String, ChatMsg)> = Vec::new();
+            let cross_poll_re = Regex::new(r"@(AGT-\d+)").expect("valid mention regex");
 
             for msg in chat_messages {
+                let sender_content = format!("[Tick {}] {}: {}", tick, msg.agent_role, msg.content);
+
+                // ── Sender memory entry ──
                 mem_entries.push((
                     msg.agent_id.clone(),
-                    format!("[Tick {}] {}: {}", tick, msg.agent_role, msg.content),
+                    sender_content.clone(),
                     seed_for_mem.clone(),
                 ));
+
+                // ── Cross-pollination: write a copy into each mentioned agent's namespace ──
+                let recipient_content = format!(
+                    "[Tick {}] @{} ({}) directed at me: {}",
+                    tick, msg.agent_id, msg.agent_role, msg.content
+                );
+                for cap in cross_poll_re.captures_iter(&msg.content) {
+                    let mentioned_id = cap[1].to_string();
+                    if mentioned_id != msg.agent_id {
+                        mem_entries.push((
+                            mentioned_id,
+                            recipient_content.clone(),
+                            seed_for_mem.clone(),
+                        ));
+                    }
+                }
 
                 history_inserts.push((msg.channel_id.clone(), msg.clone()));
 

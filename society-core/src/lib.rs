@@ -2,11 +2,19 @@
 //!
 //! Shared domain types and WebSocket wire-protocol contracts for the ZeroClaw AI Society backend.
 //!
-//! This crate defines the **versioned event envelope** (`Envelope<T>`) and the typed event/command
-//! enums that both the server and any future clients must agree on.
+//! ## Modules
+//!
+//! - [`agent`] — Canonical agent identity, roles, status, tiers, and profiles.
+//! - [`channels`] — Society channel definitions, message payloads, and templates.
+//! - [`envelope`] — Versioned event envelope wire protocol.
+//! - [`events`] — Typed server events and client commands.
 
+pub mod agent;
+pub mod channels;
 pub mod envelope;
 pub mod events;
 
+pub use agent::{AgentId, AgentRole, AgentStatus, AgentTier, RoleProfile};
+pub use channels::{AgentDetailPayload, ChatMsg, GraphLink, GraphNode, GraphSnapshot};
 pub use envelope::Envelope;
-pub use events::{ClientCommand, ServerEvent};
+pub use events::{ClientCommand, ServerEvent, SimulationAction};

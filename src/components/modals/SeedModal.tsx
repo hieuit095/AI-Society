@@ -7,6 +7,7 @@ import { memo, useCallback, useState } from 'react';
 import { X, FlaskConical, Zap, AlertTriangle } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useWorldStore } from '../../store/useWorldStore';
+import { sendCommand } from '../../services/wsClient';
 import { cn } from '../../lib/utils';
 
 const TARGET_AUDIENCES = [
@@ -20,11 +21,10 @@ const TARGET_AUDIENCES = [
 ];
 
 export const SeedModal = memo(function SeedModal() {
-  const { isSeedModalOpen, closeSeedModal, injectSeed } = useWorldStore(
+  const { isSeedModalOpen, closeSeedModal } = useWorldStore(
     useShallow((state) => ({
       isSeedModalOpen: state.isSeedModalOpen,
       closeSeedModal: state.closeSeedModal,
-      injectSeed: state.injectSeed,
     }))
   );
   const [title, setTitle] = useState('');
@@ -41,14 +41,21 @@ export const SeedModal = memo(function SeedModal() {
   // ==========================================
   const handleExecute = useCallback(() => {
     setIsExecuting(true);
+    // Send the seed injection command to the Rust server
+    sendCommand('seed.inject', {
+      type: 'injectSeed',
+      title: title || 'Unnamed Scenario',
+      audience: audience || 'General',
+      context: context || 'No additional context provided.',
+    });
+    // Clean up local form state (modal will be closed by seedApplied event)
     setTimeout(() => {
-      injectSeed(title);
       setTitle('');
       setAudience('');
       setContext('');
       setIsExecuting(false);
-    }, 800);
-  }, [title, injectSeed]);
+    }, 300);
+  }, [title, audience, context]);
 
   const handleBackdropClick = useCallback((e: React.MouseEvent) => {
     if (e.target === e.currentTarget) closeSeedModal();

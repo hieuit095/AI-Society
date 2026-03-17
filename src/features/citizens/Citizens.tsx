@@ -1,10 +1,11 @@
 /**
  * @file Citizens.tsx
- * @description Renders the searchable citizen registry table and routes row inspection into the agent side panel.
- * @ai_context This view is the tabular projection of future Rust-authored citizen snapshots and agent status updates.
+ * @description Renders the searchable citizen registry table with DOM virtualization for 1000+ agents.
+ * @ai_context Uses @tanstack/react-virtual to render only visible rows in the DOM.
  */
-import { memo, useCallback, useMemo, useState } from 'react';
+import { memo, useCallback, useMemo, useRef, useState } from 'react';
 import { Search } from 'lucide-react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { useWorldStore } from '../../store/useWorldStore';
 import { Citizen } from '../../types';
 
@@ -48,39 +49,35 @@ const CitizenRow = memo(function CitizenRow({ citizen, onInspect }: CitizenRowPr
 
       <td className="px-4 py-3 text-sm">
         <div className="flex items-center gap-2 font-mono text-xs">
-          {citizen.status === 'Awake' ? (
-            <>
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
-              <span className="text-emerald-400 font-bold">AWAKE</span>
-            </>
-          ) : (
-            <>
-              <span className="w-2 h-2 rounded-full bg-zinc-600 shrink-0" />
-              <span className="text-zinc-500">SLEEPING</span>
-            </>
-          )}
+          <span
+            className={`w-1.5 h-1.5 rounded-full shrink-0 ${citizen.status === 'Awake' ? 'bg-emerald-500 animate-pulse' : 'bg-zinc-600'}`}
+          />
+          <span className={citizen.status === 'Awake' ? 'text-emerald-400' : 'text-zinc-600'}>{citizen.status}</span>
         </div>
       </td>
 
-      <td className="px-4 py-3 text-sm font-mono text-zinc-400">{citizen.memoryUsage}</td>
+      <td className="px-4 py-3 text-sm font-mono text-zinc-600">{citizen.memoryUsage}</td>
 
       <td className="px-4 py-3 text-sm">
         <button
           onClick={handleInspectClick}
-          className="text-emerald-400 hover:text-emerald-300 font-mono text-xs uppercase tracking-widest transition-colors duration-150 group-hover:underline"
+          className="px-2 py-1 text-[10px] font-mono uppercase tracking-wider rounded bg-zinc-800 text-emerald-500 border border-zinc-700 hover:bg-emerald-950/50 hover:border-emerald-700 transition-colors duration-200 opacity-0 group-hover:opacity-100"
         >
-          INSPECT
+          Inspect
         </button>
       </td>
     </tr>
   );
 });
 
+const ROW_HEIGHT = 48;
+
 export const Citizens = memo(function Citizens() {
   const citizens = useWorldStore((s) => s.citizens);
   const setSelectedAgent = useWorldStore((s) => s.setSelectedAgent);
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState('All Roles');
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   const inspectCitizen = useCallback((citizen: Citizen) => {
     setSelectedAgent({
@@ -101,6 +98,13 @@ export const Citizens = memo(function Citizens() {
       return matchSearch && matchRole;
     });
   }, [citizens, search, roleFilter]);
+
+  const virtualizer = useVirtualizer({
+    count: filtered.length,
+    getScrollElement: () => scrollContainerRef.current,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: 10,
+  });
 
   return (
     <div className="h-full w-full p-6 flex flex-col gap-4 bg-zinc-950 text-zinc-300 overflow-hidden">
@@ -131,7 +135,11 @@ export const Citizens = memo(function Citizens() {
         </span>
       </div>
 
-      <div className="flex-1 overflow-y-auto border border-zinc-800 rounded-lg bg-zinc-900/30" style={{ scrollbarWidth: 'thin', scrollbarColor: '#27272a transparent' }}>
+      <div
+        ref={scrollContainerRef}
+        className="flex-1 overflow-y-auto border border-zinc-800 rounded-lg bg-zinc-900/30"
+        style={{ scrollbarWidth: 'thin', scrollbarColor: '#27272a transparent' }}
+      >
         <table className="w-full text-left border-collapse whitespace-nowrap">
           <thead>
             <tr>
@@ -146,15 +154,37 @@ export const Citizens = memo(function Citizens() {
             </tr>
           </thead>
           <tbody>
-            {filtered.map((citizen) => (
-              <CitizenRow key={citizen.id} citizen={citizen} onInspect={inspectCitizen} />
-            ))}
-            {filtered.length === 0 && (
+            {filtered.length === 0 ? (
               <tr>
                 <td colSpan={6} className="px-4 py-12 text-center font-mono text-sm text-zinc-700">
                   No agents match the current filters.
                 </td>
               </tr>
+            ) : (
+              <>
+                <tr style={{ height: virtualizer.getVirtualItems()[0]?.start ?? 0 }}>
+                  <td colSpan={6} />
+                </tr>
+                {virtualizer.getVirtualItems().map((virtualRow) => {
+                  const citizen = filtered[virtualRow.index];
+                  return (
+                    <CitizenRow
+                      key={citizen.id}
+                      citizen={citizen}
+                      onInspect={inspectCitizen}
+                    />
+                  );
+                })}
+                {(() => {
+                  const items = virtualizer.getVirtualItems();
+                  const lastEnd = items.length > 0 ? items[items.length - 1].end : 0;
+                  return (
+                    <tr style={{ height: virtualizer.getTotalSize() - lastEnd }}>
+                      <td colSpan={6} />
+                    </tr>
+                  );
+                })()}
+              </>
             )}
           </tbody>
         </table>

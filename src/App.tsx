@@ -3,7 +3,7 @@
  * @description Composes the persistent shell, view router, and modal layer for the God-Mode dashboard.
  * @ai_context This is the frontend entry surface for the ZeroClaw operator experience and will remain the visual shell during backend integration.
  */
-import { memo } from 'react';
+import { memo, useEffect } from 'react';
 import { TopBar } from './components/layout/TopBar';
 import { LeftSidebar } from './components/layout/LeftSidebar';
 import { SocietyHub } from './features/society-hub/SocietyHub';
@@ -12,6 +12,7 @@ import { WorldMap } from './features/world-map/WorldMap';
 import { Citizens } from './features/citizens/Citizens';
 import { SeedModal } from './components/modals/SeedModal';
 import { useWorldStore } from './store/useWorldStore';
+import { connectWebSocket, disconnectWebSocket } from './services/wsClient';
 
 const MainCanvas = memo(function MainCanvas() {
   const currentView = useWorldStore((s) => s.currentView);
@@ -37,6 +38,12 @@ const MainCanvas = memo(function MainCanvas() {
 });
 
 function App() {
+  // Connect to the Rust WebSocket server on mount
+  useEffect(() => {
+    connectWebSocket();
+    return () => disconnectWebSocket();
+  }, []);
+
   return (
     <div className="h-screen w-screen overflow-hidden flex flex-col bg-zinc-950 text-zinc-100">
       <TopBar />

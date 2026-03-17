@@ -1,0 +1,22 @@
+# Dependencies & build artifacts
+node_modules/
+target/
+dist/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+
+# Git
+.git/
+.gitattributes
+
+# Docker persistent data
+data/
+
+# Misc
+*.md
+docs/
+scripts/
+.env

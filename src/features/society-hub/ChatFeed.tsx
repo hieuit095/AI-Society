@@ -1,43 +1,40 @@
 /**
  * @file ChatFeed.tsx
- * @description Renders the active chat stream and owns the temporary client-side tick interval that drives new mock events.
- * @ai_context This is the key transition point where local ticks and generated messages will later be replaced by Rust websocket events.
+ * @description Renders the active chat stream with DOM virtualization for 1000+ messages.
+ * @ai_context Phase 7: Uses @tanstack/react-virtual — only visible messages render in the DOM.
+ *             The Rust WebSocket server drives all messages via `chat.message` events.
  */
 import { memo, useEffect, useRef } from 'react';
 import { useShallow } from 'zustand/react/shallow';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { useWorldStore } from '../../store/useWorldStore';
 import { MessageItem } from './MessageItem';
 import { Hash } from 'lucide-react';
 
+const MESSAGE_HEIGHT = 72;
+
 export const ChatFeed = memo(function ChatFeed() {
-  const { messages, activeChannel, isPlaying, incrementTick } = useWorldStore(
+  const { messages, activeChannel } = useWorldStore(
     useShallow((state) => ({
       messages: state.messages,
       activeChannel: state.activeChannel,
-      isPlaying: state.isPlaying,
-      incrementTick: state.incrementTick,
     }))
   );
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (!isPlaying) return;
-    // ==========================================
-    // 🔗 [RUST-BINDING-POINT]: WEBSOCKET TARGET
-    // TODO (Backend Phase): Remove this client-owned setInterval tick loop entirely.
-    // The Rust server will push `tick.sync` and `chat.message` events over WebSocket — no client polling needed.
-    // Expected Payload: N/A (this loop is DELETED, not replaced)
-    // ==========================================
-    const interval = setInterval(() => {
-      incrementTick();
-    }, 1500);
-    return () => clearInterval(interval);
-  }, [isPlaying, incrementTick]);
+  const virtualizer = useVirtualizer({
+    count: messages.length,
+    getScrollElement: () => scrollContainerRef.current,
+    estimateSize: () => MESSAGE_HEIGHT,
+    overscan: 8,
+  });
 
+  // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    if (messages.length > 0) {
+      virtualizer.scrollToIndex(messages.length - 1, { align: 'end', behavior: 'smooth' });
+    }
+  }, [messages.length, virtualizer]);
 
   return (
     <div className="flex-1 flex flex-col min-w-0 min-h-0">
@@ -55,8 +52,8 @@ export const ChatFeed = memo(function ChatFeed() {
       </div>
 
       <div
-        ref={containerRef}
-        className="flex-1 overflow-y-auto py-2 space-y-0.5 scroll-smooth"
+        ref={scrollContainerRef}
+        className="flex-1 overflow-y-auto py-2 scroll-smooth"
         style={{
           scrollbarWidth: 'thin',
           scrollbarColor: '#27272a transparent',
@@ -72,15 +69,34 @@ export const ChatFeed = memo(function ChatFeed() {
 
         <div className="border-t border-zinc-800/30 mb-2" />
 
-        {messages.map((msg, idx) => (
-          <MessageItem
-            key={msg.id}
-            message={msg}
-            isNew={idx === messages.length - 1}
-          />
-        ))}
-
-        <div ref={bottomRef} />
+        <div
+          style={{
+            height: virtualizer.getTotalSize(),
+            width: '100%',
+            position: 'relative',
+          }}
+        >
+          {virtualizer.getVirtualItems().map((virtualRow) => {
+            const msg = messages[virtualRow.index];
+            return (
+              <div
+                key={msg.id}
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  transform: `translateY(${virtualRow.start}px)`,
+                }}
+              >
+                <MessageItem
+                  message={msg}
+                  isNew={virtualRow.index === messages.length - 1}
+                />
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       <div className="px-4 py-3 border-t border-zinc-800/50 shrink-0">

@@ -123,6 +123,7 @@ mod tests {
             crate::events::ClientCommand::Echo { message } => {
                 assert_eq!(message, "Hello from browser!");
             }
+            _ => panic!("expected Echo variant"),
         }
     }
 }

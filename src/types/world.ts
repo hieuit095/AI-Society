@@ -33,7 +33,7 @@ export interface Message {
   agentId: string;
   agentName: string;
   agentRole: string;
-  agentRoleColor: AgentRoleColor;
+  agentRoleColor: string;
   agentAvatarInitials: string;
   content: string;
   timestamp: string;
@@ -63,7 +63,7 @@ export interface GraphNode {
   name: string;
   val: number;
   group: string;
-  status: CitizenStatus;
+  status: string;
 }
 
 export interface GraphLink {

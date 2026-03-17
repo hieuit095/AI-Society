@@ -17,7 +17,14 @@ axum = { version = "0.8", features = ["ws"] }
 futures-util = "0.3"
 
 # Serialization
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+# Timestamps
+chrono = "0.4"
+
+# SQLite memory backend
+rusqlite = { version = "0.32", features = ["bundled"] }
 
 # Observability
 tracing = "0.1"
@@ -25,11 +32,15 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # CORS support
 tower-http = { version = "0.6", features = ["cors"] }
+sysinfo = "0.38.4"
 
-# ZeroClaw agent framework (reserved for Phase 2+)
-# NOTE: zero-claw v0.1.1 is a binary crate — no lib target.
-# We reference it here as a reminder; actual integration will use its API directly.
-# zero-claw = "0.1"
+# ZeroClaw agent framework reference:
+# VERIFIED: zero-claw v0.1.2 on crates.io is a binary CLI application (src/main.rs),
+# NOT an embeddable library crate. It exposes no public traits or API for linking.
+# Our agents.rs implements the ZeroClaw architectural patterns directly:
+# - Prompt assembly (IDENTITY.md, SOUL.md structure)
+# - Provider routing (Elite→Cloud, Citizen→Local)
+# - SQLite memory backend with FTS5 hybrid search
 
 [dev-dependencies]
 tower = "0.5"

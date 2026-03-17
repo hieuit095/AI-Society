@@ -2,32 +2,35 @@
 //!
 //! The authoritative WebSocket backend for ZeroClaw AI Society.
 //!
+//! ## Architecture (Phase 3)
+//!
+//! - **Agent Genesis**: On startup, spawns 150 agents with role profiles and provider routes.
+//! - **WorldState**: Owns tick counter, agent roster, and runtime telemetry.
+//! - **Tick Loop**: Advances time, drifts agent status, and broadcasts `TickSync` events.
+//! - **WebSocket**: Bootstrap on connect, tick sync via broadcast, simulation control commands.
+//!
 //! ## Endpoints
 //!
-//! - `GET /health` — Health check, returns `{"status":"ok"}`
-//! - `GET /ws`     — WebSocket upgrade, echo handler (Phase 1 POC)
-//!
-//! ## Running
-//!
-//! ```bash
-//! cargo run -p society-server
-//! ```
-//!
-//! The server binds to `0.0.0.0:4000` by default.
+//! - `GET /health` — Health check
+//! - `GET /ws`     — WebSocket upgrade
 
+pub mod agents;
+mod analytics;
+mod memory;
+mod world;
 mod ws;
 
 use axum::{routing::get, Json, Router};
 use serde_json::json;
+use std::sync::Arc;
+use tokio::sync::{broadcast, Mutex, RwLock};
 use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
+use world::WorldState;
+use ws::AppState;
 
-/// Application entry point.
-///
-/// Initializes tracing, builds the Axum router, and binds to port 4000.
 #[tokio::main]
 async fn main() {
-    // Initialize structured logging
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -35,15 +38,34 @@ async fn main() {
         )
         .init();
 
-    // CORS — allow the Vite dev server (localhost:5173) to connect
+    // ── Agent Genesis ──
+    let roster = agents::genesis_society();
+    let world = Arc::new(RwLock::new(WorldState::with_agents(roster)));
+
+    // ── Memory Store ──
+    let memory_store =
+        memory::MemoryStore::new_in_memory().expect("failed to initialize memory store");
+    let shared_memory = Arc::new(Mutex::new(memory_store));
+
+    // ── Broadcast channel ──
+    let (event_tx, _) = broadcast::channel::<String>(256);
+
+    // ── Tick loop ──
+    world::spawn_tick_loop(world.clone(), event_tx.clone(), shared_memory.clone());
+
+    // ── CORS ──
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
         .allow_headers(Any);
 
+    // ── Router ──
+    let app_state = AppState { world, event_tx };
+
     let app = Router::new()
         .route("/health", get(health))
         .route("/ws", get(ws::ws_handler))
+        .with_state(app_state)
         .layer(cors);
 
     let addr = "0.0.0.0:4000";
@@ -68,16 +90,21 @@ mod tests {
     use axum::http::{Request, StatusCode};
     use tower::util::ServiceExt;
 
-    /// Build the app router for testing (mirrors main but without tracing/bind).
-    fn app() -> Router {
+    fn test_app() -> Router {
+        let roster = agents::genesis_society();
+        let world = Arc::new(RwLock::new(WorldState::with_agents(roster)));
+        let (event_tx, _) = broadcast::channel(16);
+        let app_state = AppState { world, event_tx };
+
         Router::new()
             .route("/health", get(health))
             .route("/ws", get(ws::ws_handler))
+            .with_state(app_state)
     }
 
     #[tokio::test]
     async fn health_returns_ok() {
-        let response = app()
+        let response = test_app()
             .oneshot(
                 Request::builder()
                     .uri("/health")

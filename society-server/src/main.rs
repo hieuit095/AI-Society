@@ -16,6 +16,7 @@
 
 pub mod agents;
 mod analytics;
+mod llm;
 mod memory;
 mod world;
 mod ws;

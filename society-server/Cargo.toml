@@ -34,6 +34,12 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tower-http = { version = "0.6", features = ["cors"] }
 sysinfo = "0.38.4"
 
+# HTTP client for LLM provider inference (OpenAI, Ollama)
+reqwest = { version = "0.12", features = ["json"] }
+
+# Regex for parsing @AGT-XXX mentions from LLM output
+regex = "1"
+
 # ZeroClaw agent framework reference:
 # VERIFIED: zero-claw v0.1.2 on crates.io is a binary CLI application (src/main.rs),
 # NOT an embeddable library crate. It exposes no public traits or API for linking.
@@ -44,5 +50,4 @@ sysinfo = "0.38.4"
 
 [dev-dependencies]
 tower = "0.5"
-reqwest = { version = "0.12", features = ["json"] }
 tokio-tungstenite = "0.26"

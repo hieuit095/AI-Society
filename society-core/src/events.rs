@@ -57,10 +57,7 @@ pub enum ServerEvent {
 
     /// Full force-graph snapshot of the agent society (emitted periodically).
     #[serde(rename_all = "camelCase")]
-    GraphSnapshot {
-        #[serde(flatten)]
-        data: GraphSnapshot,
-    },
+    GraphSnapshot { data: GraphSnapshot },
 
     /// Detailed agent telemetry for the inspector panel.
     #[serde(rename_all = "camelCase")]
@@ -78,7 +75,6 @@ pub enum ServerEvent {
     SeedApplied {
         seed_id: String,
         title: String,
-        #[serde(flatten)]
         system_message: ChatMsg,
     },
 
@@ -268,6 +264,6 @@ mod tests {
         let json = serde_json::to_value(&event).expect("serialize");
         assert_eq!(json["type"], "seedApplied");
         assert_eq!(json["seedId"], "seed-abc");
-        assert_eq!(json["agentId"], "system");
+        assert_eq!(json["systemMessage"]["agentId"], "system");
     }
 }

@@ -86,13 +86,15 @@ const SOUL_CONSTRAINTS: &str = include_str!("../prompts/SOUL.md");
 ///
 /// ## Prompt Composition Order
 /// ```text
-/// ┌───────────────────────────────┐
-/// │  IDENTITY.md (shared)        │  ← Compile-time embed via include_str!
-/// │  Role-specific identity      │  ← From RoleProfile.identity_prompt
-/// │  SOUL.md (shared)            │  ← Compile-time embed via include_str!
-/// │  Authorized tools            │  ← From RoleProfile.tool_bounds
-/// │  Per-agent delta (optional)  │  ← Agent-specific overrides
-/// └───────────────────────────────┘
+/// ┌───────────────────────────────────────────┐
+/// │  IDENTITY.md (shared)                    │  ← Compile-time embed
+/// │  Role-specific identity                  │  ← From RoleProfile
+/// │  SOUL.md (shared)                        │  ← Compile-time embed
+/// │  Authorized tools                        │  ← From RoleProfile
+/// │  Recent Channel Activity (optional)      │  ← Social Fabric Phase 2
+/// │  Relationship Memory (optional)          │  ← Social Fabric Phase 4
+/// │  Per-agent delta (optional)              │  ← Agent-specific overrides
+/// └───────────────────────────────────────────┘
 /// ```
 #[derive(Debug, Clone)]
 pub struct AssembledPrompt {
@@ -105,8 +107,23 @@ pub struct AssembledPrompt {
 /// The shared layers (`IDENTITY.md`, `SOUL.md`) are embedded at compile time
 /// via `include_str!`, ensuring zero runtime I/O and immutable consistency
 /// across all 1,000 agents.
-pub fn assemble_prompt(profile: &RoleProfile, agent_delta: Option<&str>) -> AssembledPrompt {
-    let mut parts: Vec<&str> = Vec::with_capacity(5);
+///
+/// ## Social Fabric (Phase 2)
+///
+/// When `recent_channel_activity` is `Some`, a transcript of the last N messages
+/// from the agent's subscribed channel is injected into the prompt.
+///
+/// ## Social Fabric (Phase 4)
+///
+/// When `relationship_context` is `Some`, past interactions with the peer who
+/// @-mentioned this agent are injected so the LLM has relational memory.
+pub fn assemble_prompt(
+    profile: &RoleProfile,
+    agent_delta: Option<&str>,
+    recent_channel_activity: Option<&str>,
+    relationship_context: Option<&str>,
+) -> AssembledPrompt {
+    let mut parts: Vec<&str> = Vec::with_capacity(8);
 
     // Layer 1: Shared identity preamble (from prompts/IDENTITY.md)
     parts.push(IDENTITY_PREAMBLE);
@@ -122,7 +139,24 @@ pub fn assemble_prompt(profile: &RoleProfile, agent_delta: Option<&str>) -> Asse
     let tools_section = format!("## Authorized Tools\n[{}]", profile.tool_bounds.join(", "));
     parts.push(&tools_section);
 
-    // Layer 5: Per-agent delta (if any)
+    // Layer 5: Recent channel activity (Social Fabric context injection)
+    let activity_section;
+    if let Some(activity) = recent_channel_activity {
+        activity_section = format!("## Recent Channel Activity\n{}", activity);
+        parts.push(&activity_section);
+    }
+
+    // Layer 6: Relationship memory (Social Fabric Phase 4)
+    let relationship_section;
+    if let Some(context) = relationship_context {
+        relationship_section = format!(
+            "## Relationship Memory\nYour past interactions with this peer:\n{}",
+            context
+        );
+        parts.push(&relationship_section);
+    }
+
+    // Layer 7: Per-agent delta (if any)
     let delta_section;
     if let Some(delta) = agent_delta {
         delta_section = format!("## Agent-Specific Override\n{}", delta);
@@ -163,7 +197,7 @@ impl AgentRuntime {
     pub fn spawn(id: AgentId, name: String, role: AgentRole) -> Self {
         let profile = RoleProfile::default_for(role);
         let provider = ProviderRoute::from_tier(profile.tier);
-        let prompt = assemble_prompt(&profile, None);
+        let prompt = assemble_prompt(&profile, None, None, None);
 
         Self {
             id,
@@ -323,7 +357,7 @@ mod tests {
     #[test]
     fn prompt_assembly_includes_role() {
         let profile = RoleProfile::default_for(AgentRole::Ceo);
-        let prompt = assemble_prompt(&profile, None);
+        let prompt = assemble_prompt(&profile, None, None, None);
         assert!(prompt.system_prompt.contains("CEO Agent"));
         assert!(prompt.system_prompt.contains("strategy"));
     }
@@ -331,15 +365,52 @@ mod tests {
     #[test]
     fn prompt_assembly_includes_delta() {
         let profile = RoleProfile::default_for(AgentRole::Engineer);
-        let prompt = assemble_prompt(&profile, Some("Focus on security patches."));
+        let prompt = assemble_prompt(&profile, Some("Focus on security patches."), None, None);
         assert!(prompt.system_prompt.contains("Focus on security patches."));
+    }
+
+    #[test]
+    fn prompt_assembly_includes_channel_activity() {
+        let profile = RoleProfile::default_for(AgentRole::Analyst);
+        let transcript = "[AGT-001] CEO: Budget approved.\n[AGT-042] CTO: Deploy the fix.";
+        let prompt = assemble_prompt(&profile, None, Some(transcript), None);
+        assert!(prompt.system_prompt.contains("## Recent Channel Activity"));
+        assert!(prompt.system_prompt.contains("Budget approved."));
+    }
+
+    #[test]
+    fn prompt_assembly_omits_activity_when_none() {
+        let profile = RoleProfile::default_for(AgentRole::Analyst);
+        let prompt = assemble_prompt(&profile, None, None, None);
+        assert!(!prompt.system_prompt.contains("## Recent Channel Activity"));
+    }
+
+    #[test]
+    fn prompt_assembly_includes_relationship_context() {
+        let profile = RoleProfile::default_for(AgentRole::Engineer);
+        let context = "[Tick 5] CEO Agent: We discussed the budget.";
+        let prompt = assemble_prompt(&profile, None, None, Some(context));
+        assert!(prompt.system_prompt.contains("## Relationship Memory"));
+        assert!(prompt.system_prompt.contains("budget"));
+    }
+
+    #[test]
+    fn prompt_assembly_omits_relationship_when_none() {
+        let profile = RoleProfile::default_for(AgentRole::Engineer);
+        let prompt = assemble_prompt(&profile, None, None, None);
+        assert!(!prompt.system_prompt.contains("## Relationship Memory"));
     }
 
     #[test]
     fn all_agents_have_prompts() {
         let agents = genesis_society();
         for agent in &agents {
-            assert!(!agent.prompt.system_prompt.is_empty());
+            assert!(
+                !agent.prompt.system_prompt.is_empty(),
+                "Agent {} ({}) has empty prompt",
+                agent.id,
+                agent.name
+            );
         }
     }
 }

@@ -239,6 +239,74 @@ impl MemoryStore {
         self.conn
             .query_row("SELECT COUNT(*) FROM memories", [], |row| row.get(0))
     }
+
+    /// Recall conversation memories that reference a specific peer agent,
+    /// using SQL-native FTS5 `MATCH` with `bm25()` relevance ranking.
+    ///
+    /// The `peer_agent_id` (e.g., `"AGT-042"`) is passed directly as an
+    /// FTS5 match term. Because agent IDs are embedded in the stored
+    /// content (e.g., `"[Tick 5] @AGT-042 (CTO) directed at me: ..."`),
+    /// FTS5 tokenises them and `MATCH` finds them without a full table scan.
+    ///
+    /// Results are filtered to `category = 'conversation'` and the calling
+    /// agent's `agent_id` + `seed_id`, then ranked by BM25 relevance
+    /// (computed entirely inside SQLite — zero Rust-side evaluation).
+    ///
+    /// ## Use Case (Social Fabric Phase 4)
+    ///
+    /// When an agent is selected to speak because they were @-mentioned,
+    /// this function retrieves their past interactions with the mentioner
+    /// so the LLM has relational context before generating a reply.
+    pub fn recall_peer_conversations(
+        &self,
+        agent_id: &str,
+        peer_agent_id: &str,
+        seed_id: &str,
+        limit: usize,
+    ) -> SqlResult<Vec<MemoryEntry>> {
+        // Sanitise the peer ID into a safe FTS5 query token.
+        // e.g., "AGT-042" → "AGT-042" (hyphens are kept as token chars by
+        // the default unicode61 tokeniser when they appear mid-token).
+        let fts_query = peer_agent_id.to_string();
+
+        let mut stmt = self.conn.prepare(
+            "SELECT m.id, m.agent_id, m.category, m.content, m.tick,
+                    (-bm25(memories_fts)) AS relevance
+             FROM memories_fts
+             JOIN memories m ON m.id = memories_fts.rowid
+             WHERE memories_fts MATCH ?1
+               AND m.agent_id = ?2
+               AND m.category = ?3
+               AND m.seed_id = ?4
+             ORDER BY relevance DESC
+             LIMIT ?5",
+        )?;
+
+        let entries: Vec<MemoryEntry> = stmt
+            .query_map(
+                params![
+                    fts_query,
+                    agent_id,
+                    MemoryCategory::Conversation.as_str(),
+                    seed_id,
+                    limit as i64
+                ],
+                |row| {
+                    Ok(MemoryEntry {
+                        id: row.get(0)?,
+                        agent_id: row.get(1)?,
+                        category: row.get(2)?,
+                        content: row.get(3)?,
+                        tick: row.get::<_, i64>(4)? as u64,
+                        relevance_score: row.get(5)?,
+                    })
+                },
+            )?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(entries)
+    }
 }
 
 #[cfg(test)]

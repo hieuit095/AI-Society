@@ -1,4 +1,4 @@
-# ZeroClaw AI Society
+# AI Society
 
 > **A real-time, tick-driven "God-Mode" operator dashboard for a synthetic civilization of 1,000+ AI agents.**
 
@@ -11,13 +11,13 @@
 
 ## Vision & Concept
 
-ZeroClaw AI Society is a cyberpunk-themed, real-time "God-Mode" operator dashboard designed to monitor and control a localized synthetic civilization. **This is not a simple chatbot UI.** It is a complex, tick-driven simulation engine where hundreds to thousands of AI agents coexist, reason, remember, collaborate, compete, and react to operator-injected scenarios in real time.
+AI Society is a cyberpunk-themed, real-time "God-Mode" operator dashboard designed to monitor and control a localized synthetic civilization. **This is not a simple chatbot UI.** It is a complex, tick-driven simulation engine where hundreds to thousands of AI agents coexist, reason, remember, collaborate, compete, and react to operator-injected scenarios in real time.
 
 The dashboard serves as a projection of a persistent, authoritative world state managed entirely by a high-performance Rust backend.
 
 ## Core Objectives & Applications
 
-The primary goal of the ZeroClaw AI Society is to simulate emergent behavior at scale, providing a testbed for complex scenarios such as:
+The primary goal of the AI Society is to simulate emergent behavior at scale, providing a testbed for complex scenarios such as:
 - Simulating black swan events and observing emergent social responses.
 - Testing AI economic routing and autonomous resource allocation.
 - Tracking real-time market analytics, sentiment drift, and society adoption rates.
@@ -46,7 +46,7 @@ The architecture is built around the fundamental paradigm: **"Rust Owns Reality"
 
 ## Prerequisites
 
-To run the ZeroClaw AI Society locally, ensure your host machine has the following installed:
+To run the AI Society locally, ensure your host machine has the following installed:
 
 - **Rust & Cargo:** For compiling and running the backend engine.
 - **Node.js (v20+):** For the React frontend tooling.
@@ -59,8 +59,8 @@ Follow these steps to launch the simulation environment:
 
 **Step 1: Clone and install frontend dependencies**
 ```bash
-git clone <repository-url>
-cd zeroclaw-ai-society
+git clone https://github.com/hieuit095/AI-Society
+cd AI-Society
 npm install
 ```
 

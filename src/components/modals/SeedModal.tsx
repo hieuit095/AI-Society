@@ -41,20 +41,22 @@ export const SeedModal = memo(function SeedModal() {
   // ==========================================
   const handleExecute = useCallback(() => {
     setIsExecuting(true);
-    // Send the seed injection command to the Rust server
+    // Send the seed injection command to the Rust server.
+    // The modal will be closed by the server's `seedApplied` event
+    // via `handleSeedApplied` in the Zustand store.
+    // NO local state mutation is performed — Rust owns the reset.
     sendCommand('seed.inject', {
       type: 'injectSeed',
       title: title || 'Unnamed Scenario',
       audience: audience || 'General',
       context: context || 'No additional context provided.',
     });
-    // Clean up local form state (modal will be closed by seedApplied event)
-    setTimeout(() => {
-      setTitle('');
-      setAudience('');
-      setContext('');
-      setIsExecuting(false);
-    }, 300);
+    // Reset form fields after dispatch — loading state remains
+    // until the server broadcasts `seedApplied` which closes the modal.
+    setTitle('');
+    setAudience('');
+    setContext('');
+    setIsExecuting(false);
   }, [title, audience, context]);
 
   const handleBackdropClick = useCallback((e: React.MouseEvent) => {

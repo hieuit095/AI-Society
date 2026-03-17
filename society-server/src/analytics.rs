@@ -15,6 +15,8 @@ pub struct AnalyticsPoint {
     pub negative: u32,
     pub tokens: u64,
     pub adoption: u32,
+    /// Cumulative simulated revenue derived from token burn (tokens × cost-per-token).
+    pub simulated_revenue: f64,
 }
 
 /// Rolling analytics state — accumulates across ticks.
@@ -22,6 +24,8 @@ pub struct AnalyticsPoint {
 pub struct AnalyticsEngine {
     /// Total tokens burned across all ticks in this scenario.
     pub cumulative_tokens: u64,
+    /// Cumulative simulated revenue derived from token burn.
+    pub cumulative_revenue: f64,
     /// Rolling positive sentiment counter.
     pub positive_sentiment: u32,
     /// Rolling negative sentiment counter.
@@ -36,6 +40,7 @@ impl AnalyticsEngine {
     pub fn new() -> Self {
         Self {
             cumulative_tokens: 0,
+            cumulative_revenue: 0.0,
             positive_sentiment: 35,
             negative_sentiment: 15,
             adoption_rate: 12,
@@ -46,6 +51,7 @@ impl AnalyticsEngine {
     /// Reset all counters (called on seed injection).
     pub fn reset(&mut self) {
         self.cumulative_tokens = 0;
+        self.cumulative_revenue = 0.0;
         self.positive_sentiment = 35;
         self.negative_sentiment = 15;
         self.adoption_rate = 12;
@@ -70,6 +76,10 @@ impl AnalyticsEngine {
         let tokens_per_speaker = ((self.drift_seed >> 33) % 250) + 150;
         let tick_tokens = speakers_this_tick as u64 * tokens_per_speaker;
         self.cumulative_tokens += tick_tokens;
+
+        // Revenue: each token costs ~$0.000142 (blended local/cloud rate)
+        let tick_revenue = tick_tokens as f64 * 0.000142;
+        self.cumulative_revenue += tick_revenue;
 
         // Sentiment drift — more speakers = more positive activity
         self.drift_seed = self
@@ -118,6 +128,7 @@ impl AnalyticsEngine {
             negative: self.negative_sentiment,
             tokens: self.cumulative_tokens,
             adoption: self.adoption_rate,
+            simulated_revenue: self.cumulative_revenue,
         }
     }
 }

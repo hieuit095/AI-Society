@@ -5,10 +5,9 @@
  */
 import { memo, useCallback } from 'react';
 import { useWorldStore } from '../../store/useWorldStore';
-import { AGENTS_BY_ID } from '../../data/mockData';
 import { cn } from '../../lib/utils';
 import { AlertTriangle } from 'lucide-react';
-import { Message } from '../../types';
+import { Agent, Message } from '../../types';
 
 const ROLE_COLOR_MAP: Record<string, string> = {
   emerald: 'text-emerald-400 bg-emerald-900/30 border-emerald-800/50',
@@ -56,16 +55,19 @@ const SystemMessage = memo(function SystemMessage({ message, isNew }: MessageIte
 
 export const MessageItem = memo(function MessageItem({ message, isNew }: MessageItemProps) {
   const setSelectedAgent = useWorldStore((s) => s.setSelectedAgent);
-  const agent = AGENTS_BY_ID[message.agentId];
 
-  // ==========================================
-  // 🔗 [RUST-BINDING-POINT]: WEBSOCKET TARGET
-  // TODO (Backend Phase): Replace this local agent lookup with server-issued agent detail payloads.
-  // Expected Payload: { type: 'agent.detail', agentId: string, ...Agent }
-  // ==========================================
+  // Agent metadata is carried directly on the message — no registry lookup needed.
   const handleAgentClick = useCallback(() => {
-    if (agent) setSelectedAgent(agent);
-  }, [agent, setSelectedAgent]);
+    const agent: Agent = {
+      id: message.agentId,
+      name: message.agentName,
+      role: message.agentRole,
+      roleColor: (message.agentRoleColor as Agent['roleColor']) || 'emerald',
+      avatarInitials: message.agentAvatarInitials || '??',
+      status: 'active',
+    };
+    setSelectedAgent(agent);
+  }, [message, setSelectedAgent]);
 
   if (message.isSystemMessage) {
     return <SystemMessage message={message} isNew={isNew} />;

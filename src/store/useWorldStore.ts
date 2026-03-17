@@ -2,11 +2,11 @@
  * @file useWorldStore.ts
  * @description Central Zustand store for the God-Mode dashboard.
  * @ai_context Phase 4: Server-authoritative state. Chat messages arrive via `chatMessage` WS events.
+ *             Messages are stored per-channel in `messagesByChannel` for isolated channel rendering.
  *             Graph data arrives via `graphSnapshot` WS events. Inspector data via `agentDetail`.
- *             The mock `generateMockMessage` has been removed from hydration — chat is now server-driven.
  */
 import { create } from 'zustand';
-import { Agent, AnalyticsPoint, Citizen, GraphData, Message, WorldView } from '../types';
+import { Agent, AnalyticsPoint, Channel, Citizen, GraphData, Message, WorldView } from '../types';
 import { sendCommand } from '../services/wsClient';
 
 /** Fields hydrated from the Rust server via WebSocket. */
@@ -42,7 +42,7 @@ export interface WorldState {
   rustRam: number;
 
   // ── Client-side state ──
-  messages: Message[];
+  messagesByChannel: Record<string, Message[]>;
   selectedAgent: Agent | null;
   activeChannel: string;
   currentView: WorldView;
@@ -51,6 +51,8 @@ export interface WorldState {
   citizens: Citizen[];
   graphData: GraphData;
   inspectorDetail: InspectorDetail | null;
+  channels: Channel[];
+  isBootstrapped: boolean;
 
   // ── Actions ──
   togglePlay: () => void;
@@ -70,6 +72,9 @@ export interface WorldState {
   injectSeed: (title: string) => void;
 }
 
+/** Maximum messages retained per channel for memory safety. */
+const MAX_MESSAGES_PER_CHANNEL = 200;
+
 export const useWorldStore = create<WorldState>((set) => ({
   // Server-authoritative (initial values, overwritten by WorldBootstrap)
   isPlaying: false,
@@ -79,7 +84,7 @@ export const useWorldStore = create<WorldState>((set) => ({
   rustRam: 0,
 
   // Client-side — empty until server hydrates via WebSocket
-  messages: [],
+  messagesByChannel: {},
   selectedAgent: null,
   activeChannel: 'board-room',
   currentView: 'hub',
@@ -88,6 +93,17 @@ export const useWorldStore = create<WorldState>((set) => ({
   citizens: [],
   graphData: { nodes: [], links: [] },
   inspectorDetail: null,
+  channels: [
+    { id: 'board-room', name: 'board-room', active: true },
+    { id: 'rnd-team', name: 'rnd-team' },
+    { id: 'market-square', name: 'market-square' },
+    { id: 'dev-ops', name: 'dev-ops' },
+    { id: 'legal-floor', name: 'legal-floor' },
+    { id: 'hr-lounge', name: 'hr-lounge' },
+    { id: 'finance-desk', name: 'finance-desk' },
+    { id: 'research-lab', name: 'research-lab' },
+  ],
+  isBootstrapped: false,
 
 
   /**
@@ -104,10 +120,9 @@ export const useWorldStore = create<WorldState>((set) => ({
   /**
    * Hydrate server-authoritative fields from WebSocket events.
    * Called on `world.bootstrap` and `tick.sync` events.
-   * Analytics points are generated per tick for the chart visualizations.
    */
   hydrateFromServer: (data: ServerHydration) =>
-    set(() => data),
+    set(() => ({ ...data, isBootstrapped: true })),
 
   /**
    * Hydrate graph data from `graph.snapshot` WS event.
@@ -134,12 +149,14 @@ export const useWorldStore = create<WorldState>((set) => ({
 
   /**
    * Handle `seedApplied` event from the Rust backend.
-   * Clears all local messages, resets tick to 0, closes the seed modal,
-   * and appends the server-authored system directive as the first message.
+   * Clears all channel messages, resets tick to 0, closes the seed modal,
+   * and appends the server-authored system directive to the board-room.
    */
   handleSeedApplied: (systemMessage: Message) =>
     set({
-      messages: [systemMessage],
+      messagesByChannel: {
+        'board-room': [systemMessage],
+      },
       currentTick: 0,
       isSeedModalOpen: false,
       analyticsData: [],
@@ -173,14 +190,30 @@ export const useWorldStore = create<WorldState>((set) => ({
       };
     }),
 
-  setSelectedAgent: (agent) => set({ selectedAgent: agent, inspectorDetail: null }),
+  setSelectedAgent: (agent) => {
+    set({ selectedAgent: agent, inspectorDetail: null });
+    if (agent) {
+      sendCommand('inspect.agent', { type: 'inspectAgent', agentId: agent.id });
+    }
+  },
 
   clearSelectedAgent: () => set({ selectedAgent: null, inspectorDetail: null }),
 
+  /**
+   * Append a message to the correct per-channel array.
+   * Caps each channel at MAX_MESSAGES_PER_CHANNEL entries.
+   */
   addMessage: (message) =>
-    set((state) => ({
-      messages: [...state.messages.slice(-199), message],
-    })),
+    set((state) => {
+      const channelId = message.channelId || 'board-room';
+      const existing = state.messagesByChannel[channelId] ?? [];
+      return {
+        messagesByChannel: {
+          ...state.messagesByChannel,
+          [channelId]: [...existing.slice(-(MAX_MESSAGES_PER_CHANNEL - 1)), message],
+        },
+      };
+    }),
 
   setActiveChannel: (channelId) => set({ activeChannel: channelId }),
 

@@ -35,6 +35,7 @@ export interface Message {
   agentRole: string;
   agentRoleColor: string;
   agentAvatarInitials: string;
+  channelId: string;
   content: string;
   timestamp: string;
   tick: number;
@@ -47,6 +48,7 @@ export interface AnalyticsPoint {
   negative: number;
   tokens: number;
   adoption: number;
+  simulatedRevenue: number;
 }
 
 export interface Citizen {

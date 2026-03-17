@@ -16,6 +16,7 @@
 
 pub mod agents;
 mod analytics;
+pub mod genesis;
 mod llm;
 mod memory;
 mod world;
@@ -61,7 +62,11 @@ async fn main() {
         .allow_headers(Any);
 
     // ── Router ──
-    let app_state = AppState { world, event_tx };
+    let app_state = AppState {
+        world,
+        event_tx,
+        shared_memory,
+    };
 
     let app = Router::new()
         .route("/health", get(health))
@@ -95,7 +100,14 @@ mod tests {
         let roster = agents::genesis_society();
         let world = Arc::new(RwLock::new(WorldState::with_agents(roster)));
         let (event_tx, _) = broadcast::channel(16);
-        let app_state = AppState { world, event_tx };
+        let memory_store =
+            memory::MemoryStore::new_in_memory().expect("failed to initialize memory store");
+        let shared_memory = Arc::new(Mutex::new(memory_store));
+        let app_state = AppState {
+            world,
+            event_tx,
+            shared_memory,
+        };
 
         Router::new()
             .route("/health", get(health))

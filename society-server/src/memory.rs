@@ -101,6 +101,16 @@ impl MemoryStore {
         Ok(store)
     }
 
+    /// Purge ALL memories from the database — called on seed injection
+    /// to ensure agents from old scenarios cannot recall stale context.
+    pub fn purge_all(&self) -> SqlResult<()> {
+        let deleted = self.conn.execute("DELETE FROM memories", [])?;
+        // Also clear the FTS5 index content
+        let _ = self.conn.execute("DELETE FROM memories_fts", []);
+        info!("🧹 Memory purge complete: {deleted} entries deleted");
+        Ok(())
+    }
+
     /// Initialize a file-based SQLite database.
     pub fn new_file(path: &str) -> SqlResult<Self> {
         let conn = Connection::open(path)?;

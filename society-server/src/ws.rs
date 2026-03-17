@@ -15,6 +15,7 @@
 //! - `world.bootstrap` — sent once on connection
 //! - `agent.detail` — sent in response to `inspectAgent` command
 
+use crate::memory::MemoryStore;
 use crate::world::{EventTx, SharedWorld};
 use axum::{
     extract::{
@@ -25,16 +26,22 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 use society_core::{
-    channels::{thought_templates_for_role, AgentDetailPayload, ChatMsg},
+    channels::{AgentDetailPayload, ChatMsg},
     ClientCommand, Envelope, ServerEvent, SimulationAction,
 };
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
+
+/// Type alias for the shared memory store.
+pub type SharedMemory = Arc<Mutex<MemoryStore>>;
 
 /// Shared application state injected into the WebSocket handler via Axum extractors.
 #[derive(Clone)]
 pub struct AppState {
     pub world: SharedWorld,
     pub event_tx: EventTx,
+    pub shared_memory: SharedMemory,
 }
 
 /// Axum handler that upgrades an HTTP request to a WebSocket connection.
@@ -77,6 +84,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     let inbound = tokio::spawn({
         let world = world.clone();
         let event_tx = event_tx.clone();
+        let shared_memory = state.shared_memory.clone();
         let mut ws_stream = ws_stream;
 
         async move {
@@ -145,15 +153,9 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                                         status: format!("{:?}", agent.status).to_lowercase(),
                                         model: agent.provider.model.clone(),
                                         tier: format!("{:?}", agent.provider.tier).to_lowercase(),
-                                        tokens_per_tick: {
-                                            let mut hash: u32 = 0;
-                                            for b in agent.id.as_str().bytes() {
-                                                hash = hash.wrapping_mul(31).wrapping_add(b as u32);
-                                            }
-                                            (hash % 800) + 200
-                                        },
+                                        tokens_per_tick: agent.last_token_burn,
                                         tools: agent.profile.tool_bounds.clone(),
-                                        thought_log: thought_templates_for_role(&role_name),
+                                        thought_log: agent.thought_log.iter().cloned().collect(),
                                     };
 
                                     sequence += 1;
@@ -182,6 +184,14 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
 
                                 // 1. Apply seed — resets tick, statuses, generates new seed_id
                                 let seed_id = w.apply_seed();
+
+                                // 1b. Purge SQLite memory store
+                                {
+                                    let mem = shared_memory.lock().await;
+                                    if let Err(e) = mem.purge_all() {
+                                        warn!("Failed to purge memory store: {e}");
+                                    }
+                                }
 
                                 // 2. Build system directive message
                                 let system_msg = ChatMsg {
@@ -257,6 +267,127 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                                     ServerEvent::GraphSnapshot { data: graph_data },
                                 );
                                 if let Ok(json) = serde_json::to_string(&graph_envelope) {
+                                    let _ = event_tx.send(json);
+                                }
+                            }
+                            ClientCommand::SpawnSingle => {
+                                info!("🧬 Single agent spawn requested");
+                                let mut w = world.write().await;
+
+                                let next_idx = w.agents.len() as u32 + 1;
+                                let mut drift = next_idx as u64
+                                    ^ std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap_or_default()
+                                        .as_nanos() as u64;
+
+                                let agent = crate::genesis::generate_random_agent(
+                                    society_core::AgentTier::Citizen,
+                                    next_idx,
+                                    &mut drift,
+                                );
+                                w.agents.push(agent);
+                                w.total_agents = w.agents.len() as u32;
+
+                                // Broadcast genesis result
+                                sequence += 1;
+                                let result = Envelope::new(
+                                    sequence,
+                                    "genesis.result",
+                                    ServerEvent::GenesisResult {
+                                        spawned_count: 1,
+                                        elite_count: 0,
+                                        citizen_count: 1,
+                                        new_total: w.total_agents,
+                                    },
+                                );
+                                if let Ok(json) = serde_json::to_string(&result) {
+                                    let _ = event_tx.send(json);
+                                }
+
+                                // Broadcast updated tick sync
+                                sequence += 1;
+                                let sync = Envelope::new(sequence, "tick.sync", w.to_tick_sync());
+                                if let Ok(json) = serde_json::to_string(&sync) {
+                                    let _ = event_tx.send(json);
+                                }
+
+                                // Broadcast fresh graph
+                                let graph_data = w.to_graph_snapshot();
+                                sequence += 1;
+                                let graph = Envelope::new(
+                                    sequence,
+                                    "graph.snapshot",
+                                    ServerEvent::GraphSnapshot { data: graph_data },
+                                );
+                                if let Ok(json) = serde_json::to_string(&graph) {
+                                    let _ = event_tx.send(json);
+                                }
+                            }
+                            ClientCommand::SpawnBulk { count, elite_ratio } => {
+                                let clamped_count = count.min(1000);
+                                info!(
+                                    "🧬 Bulk spawn: count={}, elite_ratio={:.2}",
+                                    clamped_count, elite_ratio
+                                );
+                                let mut w = world.write().await;
+
+                                let starting_idx = w.agents.len() as u32 + 1;
+                                let mut drift = starting_idx as u64
+                                    ^ std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap_or_default()
+                                        .as_nanos() as u64;
+
+                                let new_agents = crate::genesis::spawn_batch(
+                                    clamped_count,
+                                    elite_ratio,
+                                    starting_idx,
+                                    &mut drift,
+                                );
+
+                                let elite_count = new_agents
+                                    .iter()
+                                    .filter(|a| a.provider.tier == society_core::AgentTier::Elite)
+                                    .count()
+                                    as u32;
+                                let citizen_count = clamped_count - elite_count;
+
+                                w.agents.extend(new_agents);
+                                w.total_agents = w.agents.len() as u32;
+
+                                // Broadcast genesis result
+                                sequence += 1;
+                                let result = Envelope::new(
+                                    sequence,
+                                    "genesis.result",
+                                    ServerEvent::GenesisResult {
+                                        spawned_count: clamped_count,
+                                        elite_count,
+                                        citizen_count,
+                                        new_total: w.total_agents,
+                                    },
+                                );
+                                if let Ok(json) = serde_json::to_string(&result) {
+                                    let _ = event_tx.send(json);
+                                }
+
+                                // Broadcast updated tick sync
+                                sequence += 1;
+                                let sync = Envelope::new(sequence, "tick.sync", w.to_tick_sync());
+                                if let Ok(json) = serde_json::to_string(&sync) {
+                                    let _ = event_tx.send(json);
+                                }
+
+                                // Broadcast fresh graph
+                                let graph_data = w.to_graph_snapshot();
+                                sequence += 1;
+                                let graph = Envelope::new(
+                                    sequence,
+                                    "graph.snapshot",
+                                    ServerEvent::GraphSnapshot { data: graph_data },
+                                );
+                                if let Ok(json) = serde_json::to_string(&graph) {
                                     let _ = event_tx.send(json);
                                 }
                             }

@@ -14,6 +14,22 @@ import { SeedModal } from './components/modals/SeedModal';
 import { useWorldStore } from './store/useWorldStore';
 import { connectWebSocket, disconnectWebSocket } from './services/wsClient';
 
+const BootstrapOverlay = memo(function BootstrapOverlay() {
+  const isBootstrapped = useWorldStore((s) => s.isBootstrapped);
+  if (isBootstrapped) return null;
+  return (
+    <div className="absolute inset-0 z-50 bg-zinc-950/95 flex items-center justify-center">
+      <div className="text-center font-mono">
+        <div className="text-emerald-500 text-xl tracking-[0.4em] uppercase animate-pulse">Bootstrapping</div>
+        <div className="text-zinc-600 text-xs mt-3 tracking-widest">{'> Connecting to Rust engine...'}</div>
+        <div className="mt-4 w-48 h-0.5 bg-zinc-800 rounded overflow-hidden mx-auto">
+          <div className="h-full w-1/3 bg-emerald-600 rounded animate-[shimmer_1.5s_ease-in-out_infinite]" />
+        </div>
+      </div>
+    </div>
+  );
+});
+
 const MainCanvas = memo(function MainCanvas() {
   const currentView = useWorldStore((s) => s.currentView);
 
@@ -54,6 +70,7 @@ function App() {
       </div>
 
       <SeedModal />
+      <BootstrapOverlay />
     </div>
   );
 }

@@ -822,6 +822,7 @@ pub fn spawn_tick_loop(world: SharedWorld, tx: EventTx, memory: SharedMemory) {
                     negative: analytics_point.negative,
                     tokens: analytics_point.tokens,
                     adoption: analytics_point.adoption,
+                    simulated_revenue: analytics_point.simulated_revenue,
                 },
             );
             if let Ok(json) = serde_json::to_string(&analytics_envelope) {

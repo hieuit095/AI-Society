@@ -56,8 +56,19 @@ export const WorldMap = memo(function WorldMap() {
 
   return (
     <div ref={containerRef} className="relative h-full w-full bg-zinc-950 overflow-hidden">
-      <WorldGraphCanvas dims={dims} graphData={graphData} onNodeClick={handleNodeClick} />
-      <WorldMapOverlay awakeCount={awakeCount} graphData={graphData} />
+      {graphData.nodes.length === 0 ? (
+        <div className="h-full flex items-center justify-center">
+          <div className="text-center font-mono">
+            <div className="text-zinc-700 text-lg tracking-[0.3em] uppercase">World Engine</div>
+            <div className="text-zinc-800 text-xs mt-2 animate-pulse">{'> Awaiting topology snapshot...'}</div>
+          </div>
+        </div>
+      ) : (
+        <>
+          <WorldGraphCanvas dims={dims} graphData={graphData} onNodeClick={handleNodeClick} />
+          <WorldMapOverlay awakeCount={awakeCount} graphData={graphData} />
+        </>
+      )}
     </div>
   );
 });

@@ -86,11 +86,21 @@ pub enum ServerEvent {
         negative: u32,
         tokens: u64,
         adoption: u32,
+        simulated_revenue: f64,
     },
 
     /// Batched agent status changes emitted once per tick.
     #[serde(rename_all = "camelCase")]
     AgentStatusBatch { changes: Vec<AgentStatusEntry> },
+
+    /// Result of an agent spawn operation (single or bulk).
+    #[serde(rename_all = "camelCase")]
+    GenesisResult {
+        spawned_count: u32,
+        elite_count: u32,
+        citizen_count: u32,
+        new_total: u32,
+    },
 }
 
 // ─────────────────────────────────────────────
@@ -122,6 +132,13 @@ pub enum ClientCommand {
 
     /// Request a full world resync (sent when client detects a sequence gap).
     RequestResync,
+
+    /// Spawn a single random agent.
+    SpawnSingle,
+
+    /// Spawn a batch of agents with a controlled elite ratio.
+    #[serde(rename_all = "camelCase")]
+    SpawnBulk { count: u32, elite_ratio: f32 },
 }
 
 /// The action payload for `SimulationControl` commands.

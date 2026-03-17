@@ -6,17 +6,17 @@
 import { memo } from 'react';
 import { Hash, Volume2 } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
-import { CHANNELS } from '../../data/mockData';
 import { useWorldStore } from '../../store/useWorldStore';
 import { cn } from '../../lib/utils';
 
 const VOICE_CHANNELS = ['board-standup', 'war-room'];
 
 export const ChannelList = memo(function ChannelList() {
-  const { activeChannel, setActiveChannel } = useWorldStore(
+  const { activeChannel, setActiveChannel, channels } = useWorldStore(
     useShallow((state) => ({
       activeChannel: state.activeChannel,
       setActiveChannel: state.setActiveChannel,
+      channels: state.channels,
     }))
   );
 
@@ -32,7 +32,7 @@ export const ChannelList = memo(function ChannelList() {
           <span className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest font-mono">Text Channels</span>
         </div>
 
-        {CHANNELS.map((channel) => (
+        {channels.map((channel) => (
           <button
             key={channel.id}
             onClick={() => setActiveChannel(channel.id)}

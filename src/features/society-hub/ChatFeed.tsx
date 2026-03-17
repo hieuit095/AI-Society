@@ -1,10 +1,11 @@
 /**
  * @file ChatFeed.tsx
- * @description Renders the active chat stream with DOM virtualization for 1000+ messages.
- * @ai_context Phase 7: Uses @tanstack/react-virtual — only visible messages render in the DOM.
+ * @description Renders the active channel's chat stream with DOM virtualization for 1000+ messages.
+ * @ai_context Phase 4: Uses @tanstack/react-virtual — only visible messages render in the DOM.
+ *             Messages are filtered by activeChannel from the per-channel messagesByChannel store.
  *             The Rust WebSocket server drives all messages via `chat.message` events.
  */
-import { memo, useEffect, useRef } from 'react';
+import { memo, useEffect, useMemo, useRef } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useWorldStore } from '../../store/useWorldStore';
@@ -14,12 +15,19 @@ import { Hash } from 'lucide-react';
 const MESSAGE_HEIGHT = 72;
 
 export const ChatFeed = memo(function ChatFeed() {
-  const { messages, activeChannel } = useWorldStore(
+  const { messagesByChannel, activeChannel } = useWorldStore(
     useShallow((state) => ({
-      messages: state.messages,
+      messagesByChannel: state.messagesByChannel,
       activeChannel: state.activeChannel,
     }))
   );
+
+  // Derive the messages for the currently selected channel
+  const messages = useMemo(
+    () => messagesByChannel[activeChannel] ?? [],
+    [messagesByChannel, activeChannel]
+  );
+
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   const virtualizer = useVirtualizer({

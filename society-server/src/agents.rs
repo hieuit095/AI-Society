@@ -18,6 +18,7 @@ use society_core::{
     agent::{generate_agent_name, AgentTier, RoleProfile},
     AgentId, AgentRole, AgentStatus,
 };
+use std::collections::VecDeque;
 use tracing::info;
 
 // ─────────────────────────────────────────────
@@ -207,6 +208,10 @@ pub struct AgentRuntime {
     pub prompt: AssembledPrompt,
     /// Memory handle — placeholder for future vector store integration.
     pub memory_handle: Option<String>,
+    /// Bounded ring buffer of recent reasoning steps / tool calls (max 20).
+    pub thought_log: VecDeque<String>,
+    /// Tokens consumed in the agent's last LLM turn.
+    pub last_token_burn: u32,
 }
 
 impl AgentRuntime {
@@ -224,6 +229,8 @@ impl AgentRuntime {
             status: AgentStatus::Awake,
             prompt,
             memory_handle: None,
+            thought_log: VecDeque::with_capacity(20),
+            last_token_burn: 0,
         }
     }
 }

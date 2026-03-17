@@ -130,17 +130,29 @@ function handleServerEvent(envelope: Envelope<Record<string, unknown>>): void {
     const { payload, sequence: inboundSeq } = envelope;
     const type = payload?.type as string;
 
-    // ── Sequence gap detection ──
-    if (inboundSeq && inboundSeq > expectedInboundSequence && !resyncInFlight) {
-        console.warn(`[WS] Sequence gap detected: expected ${expectedInboundSequence}, got ${inboundSeq}. Requesting resync.`);
-        resyncInFlight = true;
-        sendCommand('clientCommand', { type: 'requestResync' });
-    }
-    if (inboundSeq) {
-        expectedInboundSequence = inboundSeq + 1;
-    }
+    // ── worldBootstrap is always accepted unconditionally ──
+    // It resets the sequence counter and clears any in-flight resync.
     if (type === 'worldBootstrap') {
         resyncInFlight = false;
+        if (inboundSeq) {
+            expectedInboundSequence = inboundSeq + 1;
+        }
+        // Fall through to process the event below.
+    } else if (inboundSeq) {
+        // ── Sequence gap detection ──
+        if (inboundSeq > expectedInboundSequence) {
+            if (!resyncInFlight) {
+                console.warn(
+                    `[WS] Sequence gap: expected ${expectedInboundSequence}, got ${inboundSeq}. Dropping payload and requesting resync.`
+                );
+                resyncInFlight = true;
+                sendCommand('clientCommand', { type: 'requestResync' });
+            }
+            // DROP this payload — wait for the resync bootstrap.
+            return;
+        }
+        // Monotonic advancement — only on sequential messages.
+        expectedInboundSequence = inboundSeq + 1;
     }
 
     const store = useWorldStore.getState();
@@ -175,6 +187,7 @@ function handleServerEvent(envelope: Envelope<Record<string, unknown>>): void {
                 agentRole: payload.agentRole as string,
                 agentRoleColor: payload.agentRoleColor as string,
                 agentAvatarInitials: payload.agentAvatarInitials as string,
+                channelId: payload.channelId as string,
                 content: payload.content as string,
                 timestamp: payload.timestamp as string,
                 tick: payload.tick as number,
@@ -226,6 +239,7 @@ function handleServerEvent(envelope: Envelope<Record<string, unknown>>): void {
                 negative: payload.negative as number,
                 tokens: payload.tokens as number,
                 adoption: payload.adoption as number,
+                simulatedRevenue: payload.simulatedRevenue as number,
             });
             break;
 
@@ -241,6 +255,7 @@ function handleServerEvent(envelope: Envelope<Record<string, unknown>>): void {
                     agentRole: sysMsg.agentRole as string,
                     agentRoleColor: sysMsg.agentRoleColor as string,
                     agentAvatarInitials: sysMsg.agentAvatarInitials as string,
+                    channelId: (sysMsg.channelId as string) ?? 'board-room',
                     content: sysMsg.content as string,
                     timestamp: sysMsg.timestamp as string,
                     tick: (sysMsg.tick as number) ?? 0,
@@ -251,6 +266,14 @@ function handleServerEvent(envelope: Envelope<Record<string, unknown>>): void {
             }
             break;
         }
+
+        case 'genesisResult':
+            console.log(
+                `[WS] 🧬 Genesis: ${payload.spawnedCount} agents spawned (${payload.eliteCount} Elite, ${payload.citizenCount} Citizen). Total: ${payload.newTotal}`
+            );
+            // The server also broadcasts tickSync + graphSnapshot,
+            // so totalAgents/graph will auto-update via those handlers.
+            break;
 
         case 'echo':
             console.log('[WS] Echo:', payload.message);

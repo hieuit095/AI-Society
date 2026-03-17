@@ -69,11 +69,12 @@ const KpiCard = memo(function KpiCard({ icon: Icon, label, value, sub, accent, b
 });
 
 export const MarketAnalytics = memo(function MarketAnalytics() {
-  const { analyticsData, currentTick, awakeAgents } = useWorldStore(
+  const { analyticsData, currentTick, awakeAgents, isBootstrapped } = useWorldStore(
     useShallow((state) => ({
       analyticsData: state.analyticsData,
       currentTick: state.currentTick,
       awakeAgents: state.awakeAgents,
+      isBootstrapped: state.isBootstrapped,
     }))
   );
 
@@ -87,17 +88,19 @@ export const MarketAnalytics = memo(function MarketAnalytics() {
       ? ((latestPoint.adoption - previousPoint.adoption) / previousPoint.adoption) * 100
       : 0;
 
+    // Feature adoption — server-derived base, proportionally distributed
+    const baseAdoption = latestPoint?.adoption ?? 0;
     return {
       latest: latestPoint,
       sentimentTrend: positiveTrend,
       adoptionTrend: nextAdoptionTrend,
       featureData: [
-        { name: 'Adaptive Memory', value: latestPoint?.adoption ?? 0 },
-        { name: 'Tool Chaining', value: Math.round((latestPoint?.positive ?? 50) * 0.7) },
-        { name: 'Multi-Modal', value: Math.round((latestPoint?.positive ?? 50) * 0.5) },
-        { name: 'Peer Collab', value: Math.round((latestPoint?.negative ?? 20) * 1.8) },
-        { name: 'Auto Schedule', value: Math.round((latestPoint?.adoption ?? 50) * 0.6) },
-        { name: 'Self Repair', value: Math.round((latestPoint?.positive ?? 40) * 0.4) },
+        { name: 'Adaptive Memory', value: baseAdoption },
+        { name: 'Tool Chaining', value: Math.round(baseAdoption * 0.85) },
+        { name: 'Multi-Modal', value: Math.round(baseAdoption * 0.6) },
+        { name: 'Peer Collab', value: Math.round(baseAdoption * 0.45) },
+        { name: 'Auto Schedule', value: Math.round(baseAdoption * 0.7) },
+        { name: 'Self Repair', value: Math.round(baseAdoption * 0.35) },
       ],
     };
   }, [analyticsData]);
@@ -107,6 +110,17 @@ export const MarketAnalytics = memo(function MarketAnalytics() {
   // TODO (Backend Phase): Replace these client-derived view metrics with server-side analytics aggregations from `analytics.tick` events.
   // Expected Payload: { type: 'analytics.tick', tick: number, positive: number, negative: number, tokens: number, adoption: number }
   // ==========================================
+
+  if (!isBootstrapped || analyticsData.length === 0) {
+    return (
+      <div className="h-full flex items-center justify-center">
+        <div className="text-center font-mono">
+          <div className="text-zinc-700 text-lg tracking-[0.3em] uppercase">Awaiting Market Data</div>
+          <div className="text-zinc-800 text-xs mt-2 animate-pulse">{'> Connecting to analytics engine...'}</div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -131,7 +145,7 @@ export const MarketAnalytics = memo(function MarketAnalytics() {
         <KpiCard
           icon={TrendingUp}
           label="Simulated Revenue"
-          value={`$${((currentTick * 142.8) / 1000).toFixed(1)}K`}
+          value={`$${((latest?.simulatedRevenue ?? 0) / 1000).toFixed(1)}K`}
           sub="Accumulated since tick 0"
           accent="#10b981"
           borderAccent="border-emerald-900/30"
@@ -139,12 +153,11 @@ export const MarketAnalytics = memo(function MarketAnalytics() {
         />
         <KpiCard
           icon={Cpu}
-          label="Token Burn Cost"
-          value={`${((currentTick * 2.5) / 1000).toFixed(1)}K`}
-          sub="Tokens burned this session"
+          label="Token Burn"
+          value={`${((latest?.tokens ?? 0) / 1000).toFixed(1)}K`}
+          sub="Cumulative tokens burned"
           accent="#06b6d4"
           borderAccent="border-cyan-900/30"
-          trend={1.4}
         />
         <KpiCard
           icon={Users}

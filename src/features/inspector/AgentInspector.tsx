@@ -1,9 +1,9 @@
 /**
  * @file AgentInspector.tsx
- * @description Slides in detailed agent telemetry, current status, and mocked reasoning traces for the selected agent.
- * @ai_context This panel is the UI endpoint that future Rust `agent.detail` payloads will hydrate with real model, memory, and thought data.
+ * @description Slides in detailed agent telemetry from the Rust `agent.detail` WebSocket event.
+ * @ai_context Phase 6: All stats are server-authoritative via `inspectorDetail` in the Zustand store.
  */
-import { memo, useMemo } from 'react';
+import { memo } from 'react';
 import { X, Cpu, Hash, Activity, Zap, Clock } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useWorldStore } from '../../store/useWorldStore';
@@ -53,29 +53,14 @@ function StatRow({ icon: Icon, label, value, valueClass }: { icon: React.Element
 }
 
 export const AgentInspector = memo(function AgentInspector() {
-  const { selectedAgent, clearSelectedAgent, currentTick } = useWorldStore(
+  const { selectedAgent, clearSelectedAgent, currentTick, inspectorDetail } = useWorldStore(
     useShallow((state) => ({
       selectedAgent: state.selectedAgent,
       clearSelectedAgent: state.clearSelectedAgent,
       currentTick: state.currentTick,
+      inspectorDetail: state.inspectorDetail,
     }))
   );
-
-  // ==========================================
-  // 🔗 [RUST-BINDING-POINT]: WEBSOCKET TARGET
-  // TODO (Backend Phase): Replace these mock stat values with real agent telemetry from `agent.detail` WebSocket events.
-  // Expected Payload: { type: 'agent.detail', agentId: string, model: string, tokensPerTick: number, memoryUsage: number }
-  // ==========================================
-  const mockTokensPerTick = useMemo(() => {
-    if (!selectedAgent) return '0';
-    // Deterministic pseudo-random from agent id so it stays stable between renders
-    let hash = 0;
-    for (let i = 0; i < selectedAgent.id.length; i++) {
-      hash = ((hash << 5) - hash) + selectedAgent.id.charCodeAt(i);
-      hash |= 0;
-    }
-    return `${Math.abs(hash % 800) + 200}`;
-  }, [selectedAgent]);
 
   return (
     <div
@@ -132,14 +117,14 @@ export const AgentInspector = memo(function AgentInspector() {
               <StatRow icon={Hash} label="Agent ID" value={selectedAgent.id.toUpperCase()} />
               <StatRow icon={Clock} label="Last Tick" value={currentTick.toLocaleString()} valueClass="text-emerald-400" />
               <StatRow icon={Activity} label="Status" value={selectedAgent.status.toUpperCase()} valueClass={STATUS_TEXT[selectedAgent.status]} />
-              <StatRow icon={Zap} label="Model" value="GPT-ZC-4o" valueClass="text-cyan-400" />
-              <StatRow icon={Cpu} label="Tokens/tick" value={mockTokensPerTick} valueClass="text-amber-400" />
+              <StatRow icon={Zap} label="Model" value={inspectorDetail?.model ?? 'Awaiting Telemetry...'} valueClass={inspectorDetail?.model ? 'text-cyan-400' : 'text-zinc-600'} />
+              <StatRow icon={Cpu} label="Tokens/tick" value={inspectorDetail?.tokensPerTick?.toLocaleString() ?? '0'} valueClass="text-amber-400" />
             </div>
           </div>
 
           <div className="p-4">
             <h3 className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest font-mono mb-2">Live Thought Log</h3>
-            <ThoughtLog agent={selectedAgent} />
+            <ThoughtLog />
 
             <div className="mt-4 space-y-2">
               <h3 className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest font-mono">Actions</h3>

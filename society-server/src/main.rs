@@ -44,13 +44,13 @@ async fn main() {
     let roster = agents::genesis_society();
     let world = Arc::new(RwLock::new(WorldState::with_agents(roster)));
 
-    // ── Memory Store ──
-    let memory_store =
-        memory::MemoryStore::new_in_memory().expect("failed to initialize memory store");
+    // ── Memory Store (file-based for persistence across restarts) ──
+    let memory_store = memory::MemoryStore::new_file("./society-memory.db")
+        .expect("failed to initialize memory store");
     let shared_memory = Arc::new(Mutex::new(memory_store));
 
     // ── Broadcast channel ──
-    let (event_tx, _) = broadcast::channel::<String>(256);
+    let (event_tx, _) = broadcast::channel::<String>(1024);
 
     // ── Tick loop ──
     world::spawn_tick_loop(world.clone(), event_tx.clone(), shared_memory.clone());

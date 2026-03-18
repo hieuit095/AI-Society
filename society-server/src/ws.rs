@@ -69,11 +69,25 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
 
     let mut rx = state.event_tx.subscribe();
 
-    // ── Outbound task: forward broadcast events to this client ──
+    // ── Outbound task: forward broadcast events with backpressure ──
     let outbound = tokio::spawn(async move {
-        while let Ok(json) = rx.recv().await {
-            if ws_sink.send(Message::Text(json.into())).await.is_err() {
-                break;
+        loop {
+            match rx.recv().await {
+                Ok(json) => {
+                    if ws_sink.send(Message::Text(json.into())).await.is_err() {
+                        break;
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    tracing::warn!(
+                        skipped,
+                        "WS client lagging — {} events dropped by broadcast",
+                        skipped
+                    );
+                    // Continue: the channel has already advanced past the lost events.
+                    // Critical events (bootstrap, chat.batch) will be in the next batch.
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             }
         }
     });
@@ -389,6 +403,70 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                                 );
                                 if let Ok(json) = serde_json::to_string(&graph) {
                                     let _ = event_tx.send(json);
+                                }
+                            }
+                            ClientCommand::SaveSnapshot => {
+                                info!("💾 Snapshot save requested");
+                                let w = world.read().await;
+                                let snapshot_data = w.generate_snapshot();
+
+                                sequence += 1;
+                                let envelope = Envelope::new(
+                                    sequence,
+                                    "snapshot.data",
+                                    ServerEvent::SnapshotData {
+                                        snapshot: snapshot_data,
+                                    },
+                                );
+                                if let Ok(json) = serde_json::to_string(&envelope) {
+                                    let _ = event_tx.send(json);
+                                }
+                                info!("💾 Snapshot sent to client");
+                            }
+                            ClientCommand::LoadSnapshot { snapshot } => {
+                                info!("📂 Snapshot load requested");
+                                let mut w = world.write().await;
+
+                                match w.hydrate_from_snapshot(&snapshot) {
+                                    Ok(()) => {
+                                        info!("📂 World state hydrated from snapshot");
+
+                                        // Purge SQLite to match the restored seed
+                                        {
+                                            let mem = shared_memory.lock().await;
+                                            if let Err(e) = mem.purge_all() {
+                                                warn!("Failed to purge memory on hydration: {e}");
+                                            }
+                                        }
+
+                                        // Broadcast fresh bootstrap to all clients
+                                        sequence += 1;
+                                        let bootstrap = Envelope::new(
+                                            sequence,
+                                            "world.bootstrap",
+                                            w.to_bootstrap(),
+                                        );
+                                        if let Ok(json) = serde_json::to_string(&bootstrap) {
+                                            let _ = event_tx.send(json);
+                                        }
+
+                                        // Broadcast fresh graph
+                                        let graph_data = w.to_graph_snapshot();
+                                        sequence += 1;
+                                        let graph = Envelope::new(
+                                            sequence,
+                                            "graph.snapshot",
+                                            ServerEvent::GraphSnapshot { data: graph_data },
+                                        );
+                                        if let Ok(json) = serde_json::to_string(&graph) {
+                                            let _ = event_tx.send(json);
+                                        }
+
+                                        info!("📂 Snapshot hydration complete — simulation paused");
+                                    }
+                                    Err(e) => {
+                                        warn!("📂 Snapshot hydration failed: {e}");
+                                    }
                                 }
                             }
                         }

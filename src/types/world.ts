@@ -49,6 +49,9 @@ export interface AnalyticsPoint {
   tokens: number;
   adoption: number;
   simulatedRevenue: number;
+  tickLatencyMs: number;
+  recallLatencyMs: number;
+  wsQueueDepth: number;
 }
 
 export interface Citizen {

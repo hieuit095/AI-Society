@@ -26,7 +26,8 @@ use tracing::info;
 // ─────────────────────────────────────────────
 
 /// Describes which LLM provider an agent's requests are routed to.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ProviderRoute {
     /// The economic tier (Elite = cloud, Citizen = local).
     pub tier: AgentTier,
@@ -98,7 +99,8 @@ const SOUL_CONSTRAINTS: &str = include_str!("../prompts/SOUL.md");
 /// │  Per-agent delta (optional)              │  ← Agent-specific overrides
 /// └───────────────────────────────────────────┘
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AssembledPrompt {
     pub system_prompt: String,
 }
@@ -192,7 +194,8 @@ pub fn assemble_prompt(
 
 /// A live agent runtime instance — the server-side representation of one agent
 /// in the society. Holds identity, routing, status, and prompt state.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentRuntime {
     /// Canonical identifier (AGT-###).
     pub id: AgentId,

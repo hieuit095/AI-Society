@@ -53,6 +53,7 @@ export interface WorldState {
   inspectorDetail: InspectorDetail | null;
   channels: Channel[];
   isBootstrapped: boolean;
+  connectionStatus: 'stable' | 'degraded' | 'resyncing';
 
   // ── Actions ──
   togglePlay: () => void;
@@ -65,11 +66,13 @@ export interface WorldState {
   setSelectedAgent: (agent: Agent | null) => void;
   clearSelectedAgent: () => void;
   addMessage: (message: Message) => void;
+  addMessages: (messages: Message[]) => void;
   setActiveChannel: (channelId: string) => void;
   setCurrentView: (view: WorldView) => void;
   openSeedModal: () => void;
   closeSeedModal: () => void;
   injectSeed: (title: string) => void;
+  setConnectionStatus: (status: 'stable' | 'degraded' | 'resyncing') => void;
 }
 
 /** Maximum messages retained per channel for memory safety. */
@@ -104,6 +107,7 @@ export const useWorldStore = create<WorldState>((set) => ({
     { id: 'research-lab', name: 'research-lab' },
   ],
   isBootstrapped: false,
+  connectionStatus: 'stable',
 
 
   /**
@@ -215,6 +219,22 @@ export const useWorldStore = create<WorldState>((set) => ({
       };
     }),
 
+  /**
+   * Batch-append messages from a `chat.batch` frame.
+   * Groups by channel and merges in a single state update
+   * to prevent N individual React renders.
+   */
+  addMessages: (messages) =>
+    set((state) => {
+      const updated = { ...state.messagesByChannel };
+      for (const msg of messages) {
+        const channelId = msg.channelId || 'board-room';
+        const existing = updated[channelId] ?? [];
+        updated[channelId] = [...existing.slice(-(MAX_MESSAGES_PER_CHANNEL - 1)), msg];
+      }
+      return { messagesByChannel: updated };
+    }),
+
   setActiveChannel: (channelId) => set({ activeChannel: channelId }),
 
   setCurrentView: (view) => set({ currentView: view }),
@@ -236,4 +256,6 @@ export const useWorldStore = create<WorldState>((set) => ({
       context: '',
     });
   },
+
+  setConnectionStatus: (status) => set({ connectionStatus: status }),
 }));

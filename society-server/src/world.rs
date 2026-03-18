@@ -42,7 +42,8 @@ const MAX_SPEAKERS_PER_TICK: usize = 5;
 const MENTION_TTL: u64 = 3;
 
 /// The authoritative simulation state.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct WorldState {
     pub is_playing: bool,
     pub current_tick: u64,
@@ -62,6 +63,10 @@ pub struct WorldState {
     /// pushed here with an expiration tick so they are prioritised as
     /// speakers in upcoming ticks.
     pub mention_queue: VecDeque<(String, u64)>,
+
+    // ── Analytics (Phase 6) ──────────────────────────────────────────
+    /// Rolling analytics engine — accumulates token burns, sentiment, and adoption.
+    pub analytics: AnalyticsEngine,
 }
 
 impl WorldState {
@@ -83,6 +88,7 @@ impl WorldState {
             agents,
             channel_history: HashMap::new(),
             mention_queue: VecDeque::new(),
+            analytics: AnalyticsEngine::new(),
         }
     }
 
@@ -112,6 +118,9 @@ impl WorldState {
         // Flush Social Fabric state
         self.channel_history.clear();
         self.mention_queue.clear();
+
+        // Reset analytics
+        self.analytics.reset();
 
         self.seed_id.clone()
     }
@@ -197,6 +206,47 @@ impl WorldState {
 
         GraphSnapshotData { nodes, links }
     }
+
+    /// Generate a complete JSON snapshot of the current world state.
+    ///
+    /// The snapshot captures every field needed to reconstruct the simulation
+    /// at an arbitrary point in time, including the embedded analytics state.
+    pub fn generate_snapshot(&self) -> serde_json::Value {
+        serde_json::json!({
+            "world": serde_json::to_value(self).unwrap_or_default(),
+            "snapshotVersion": 1,
+            "createdAt": chrono::Utc::now().to_rfc3339(),
+        })
+    }
+
+    /// Hydrate the world state from a previously saved snapshot.
+    ///
+    /// Pauses the simulation during hydration to prevent tick-loop races.
+    pub fn hydrate_from_snapshot(&mut self, snapshot: &serde_json::Value) -> Result<(), String> {
+        let version = snapshot["snapshotVersion"]
+            .as_u64()
+            .ok_or("missing snapshotVersion")?;
+        if version != 1 {
+            return Err(format!("unsupported snapshot version: {version}"));
+        }
+
+        let world_json = &snapshot["world"];
+        let restored: WorldState = serde_json::from_value(world_json.clone())
+            .map_err(|e| format!("failed to deserialize world: {e}"))?;
+
+        // Overwrite all fields — pause tick loop to prevent races.
+        self.is_playing = false;
+        self.current_tick = restored.current_tick;
+        self.total_agents = restored.total_agents;
+        self.rust_ram = restored.rust_ram;
+        self.seed_id = restored.seed_id;
+        self.agents = restored.agents;
+        self.channel_history = restored.channel_history;
+        self.mention_queue = restored.mention_queue;
+        self.analytics = restored.analytics;
+
+        Ok(())
+    }
 }
 
 impl Default for WorldState {
@@ -210,6 +260,7 @@ impl Default for WorldState {
             agents: Vec::new(),
             channel_history: HashMap::new(),
             mention_queue: VecDeque::new(),
+            analytics: AnalyticsEngine::new(),
         }
     }
 }
@@ -354,7 +405,6 @@ pub fn spawn_tick_loop(world: SharedWorld, tx: EventTx, memory: SharedMemory) {
         let mut tick_interval = interval(Duration::from_millis(1500));
         let mut sequence: u64 = 0;
         let mut drift_seed: u64 = 42;
-        let mut analytics = AnalyticsEngine::new();
         let mut sys = System::new_all();
 
         loop {
@@ -691,11 +741,12 @@ pub fn spawn_tick_loop(world: SharedWorld, tx: EventTx, memory: SharedMemory) {
                 }
             }
 
-            // ── Broadcast chat messages + build memory entries ──
+            // ── Collect chat messages + build memory entries ──
             let mut mem_entries: Vec<(String, String, String)> =
                 Vec::with_capacity(chat_messages.len() * 2);
             let seed_for_mem = snapshot.seed_id.clone();
             let mut history_inserts: Vec<(String, ChatMsg)> = Vec::new();
+            let mut batch_msgs: Vec<ChatMsg> = Vec::with_capacity(chat_messages.len());
             let cross_poll_re = Regex::new(r"@(AGT-\d+)").expect("valid mention regex");
 
             for msg in chat_messages {
@@ -725,10 +776,19 @@ pub fn spawn_tick_loop(world: SharedWorld, tx: EventTx, memory: SharedMemory) {
                 }
 
                 history_inserts.push((msg.channel_id.clone(), msg.clone()));
+                batch_msgs.push(msg);
+            }
 
+            // ── Emit all chat messages as a single coalesced frame ──
+            if !batch_msgs.is_empty() {
                 sequence += 1;
-                let envelope =
-                    Envelope::new(sequence, "chat.message", ServerEvent::ChatMessage { msg });
+                let envelope = Envelope::new(
+                    sequence,
+                    "chat.batch",
+                    ServerEvent::ChatBatch {
+                        messages: batch_msgs,
+                    },
+                );
                 if let Ok(json) = serde_json::to_string(&envelope) {
                     let _ = tx.send(json);
                 }
@@ -809,9 +869,25 @@ pub fn spawn_tick_loop(world: SharedWorld, tx: EventTx, memory: SharedMemory) {
                 });
             }
 
-            // ── Compute and emit analytics (no lock needed) ──
-            let analytics_point =
-                analytics.compute_tick(tick, snapshot.awake_count, speakers_this_tick);
+            // ── Compute and emit analytics (requires write lock) ──
+            let tick_latency = tick_start.elapsed().as_millis() as u64;
+            let ws_depth = tx.receiver_count();
+            let analytics_point = {
+                let mut state = world.write().await;
+                let ap = state.analytics.compute_tick(
+                    tick,
+                    snapshot.awake_count,
+                    speakers_this_tick,
+                    tick_latency,
+                    0, // recall_latency_ms: populated when FTS5 queries run
+                    ws_depth,
+                );
+                // Reset analytics if the seed just changed
+                if tick == 1 {
+                    state.analytics.reset();
+                }
+                ap
+            };
             sequence += 1;
             let analytics_envelope = Envelope::new(
                 sequence,
@@ -823,6 +899,9 @@ pub fn spawn_tick_loop(world: SharedWorld, tx: EventTx, memory: SharedMemory) {
                     tokens: analytics_point.tokens,
                     adoption: analytics_point.adoption,
                     simulated_revenue: analytics_point.simulated_revenue,
+                    tick_latency_ms: analytics_point.tick_latency_ms,
+                    recall_latency_ms: analytics_point.recall_latency_ms,
+                    ws_queue_depth: analytics_point.ws_queue_depth,
                 },
             );
             if let Ok(json) = serde_json::to_string(&analytics_envelope) {
@@ -849,11 +928,6 @@ pub fn spawn_tick_loop(world: SharedWorld, tx: EventTx, memory: SharedMemory) {
                     let _ = tx.send(json);
                     debug!(tick, "Graph snapshot broadcast");
                 }
-            }
-
-            // ── Reset analytics if the seed just changed ──
-            if tick == 1 {
-                analytics.reset();
             }
 
             // ── Telemetry ──

@@ -4,7 +4,7 @@
  * @ai_context This is the primary surface that will reflect Rust-authored tick, agent, and memory telemetry once websocket sync is live.
  */
 import { memo, useState, useRef, useEffect } from 'react';
-import { Play, Pause, FastForward, Activity, Cpu, FlaskConical, UserPlus, Users } from 'lucide-react';
+import { Play, Pause, FastForward, Activity, Cpu, FlaskConical, UserPlus, Users, AlertTriangle } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useWorldStore } from '../../store/useWorldStore';
 import { sendCommand } from '../../services/wsClient';
@@ -15,7 +15,7 @@ function formatTick(tick: number): string {
 }
 
 export const TopBar = memo(function TopBar() {
-  const { isPlaying, currentTick, awakeAgents, totalAgents, rustRam, togglePlay, openSeedModal } = useWorldStore(
+  const { isPlaying, currentTick, awakeAgents, totalAgents, rustRam, togglePlay, openSeedModal, connectionStatus } = useWorldStore(
     useShallow((state) => ({
       isPlaying: state.isPlaying,
       currentTick: state.currentTick,
@@ -24,6 +24,7 @@ export const TopBar = memo(function TopBar() {
       rustRam: state.rustRam,
       togglePlay: state.togglePlay,
       openSeedModal: state.openSeedModal,
+      connectionStatus: state.connectionStatus,
     }))
   );
 
@@ -106,6 +107,20 @@ export const TopBar = memo(function TopBar() {
       </div>
 
       <div className="flex items-center gap-4">
+        {/* ── Connection Degradation Warning ── */}
+        {connectionStatus !== 'stable' && (
+          <div className={cn(
+            'flex items-center gap-2 px-3 py-1.5 rounded text-xs font-mono font-bold uppercase tracking-wider animate-pulse border',
+            connectionStatus === 'resyncing'
+              ? 'bg-amber-600/20 text-amber-400 border-amber-700'
+              : 'bg-rose-600/20 text-rose-400 border-rose-700'
+          )}>
+            <AlertTriangle className="w-3.5 h-3.5" />
+            <span>
+              {connectionStatus === 'resyncing' ? '⚠️ RESYNCING' : '⚠️ DISCONNECTED'}
+            </span>
+          </div>
+        )}
         <div className="flex items-center gap-2 text-xs font-mono text-zinc-400 bg-zinc-950/50 px-3 py-1.5 rounded border border-zinc-800/50">
           <Activity className="w-3.5 h-3.5 text-emerald-500" />
           <span className="text-emerald-400">{awakeAgents.toLocaleString()}</span>

@@ -266,14 +266,30 @@ export const MarketAnalytics = memo(function MarketAnalytics() {
 
       <div className="bg-zinc-900/50 border border-zinc-800 rounded-lg p-4 shrink-0">
         <div className="flex items-center gap-2 mb-3">
-          <span className="text-[10px] font-mono font-bold text-zinc-600 uppercase tracking-widest">System Diagnostics</span>
+          <span className="text-[10px] font-mono font-bold text-zinc-600 uppercase tracking-widest">Engine Telemetry</span>
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
           {[
-            { label: 'TICK RATE', value: '1.5s/tick', color: 'text-emerald-400' },
-            { label: 'MSG QUEUE', value: `${analyticsData.length} pts`, color: 'text-cyan-400' },
-            { label: 'AGENT ERR RATE', value: '0.03%', color: 'text-amber-400' },
-            { label: 'SIM HEALTH', value: 'NOMINAL', color: 'text-emerald-400' },
+            {
+              label: 'TICK LATENCY',
+              value: `${latest?.tickLatencyMs ?? 0}ms`,
+              color: (latest?.tickLatencyMs ?? 0) > 1500 ? 'text-rose-400' : (latest?.tickLatencyMs ?? 0) > 500 ? 'text-amber-400' : 'text-emerald-400',
+            },
+            {
+              label: 'FTS5 RECALL',
+              value: `${latest?.recallLatencyMs ?? 0}ms`,
+              color: (latest?.recallLatencyMs ?? 0) > 100 ? 'text-rose-400' : 'text-emerald-400',
+            },
+            {
+              label: 'WS QUEUE DEPTH',
+              value: `${latest?.wsQueueDepth ?? 0}`,
+              color: (latest?.wsQueueDepth ?? 0) > 50 ? 'text-amber-400' : 'text-emerald-400',
+            },
+            {
+              label: 'SIM HEALTH',
+              value: (latest?.tickLatencyMs ?? 0) > 1500 ? 'DEGRADED' : 'NOMINAL',
+              color: (latest?.tickLatencyMs ?? 0) > 1500 ? 'text-rose-400' : 'text-emerald-400',
+            },
           ].map((stat) => (
             <div key={stat.label} className="bg-zinc-950 border border-zinc-800 rounded p-3">
               <div className="text-[10px] font-mono text-zinc-600 uppercase tracking-widest mb-1">{stat.label}</div>
@@ -281,6 +297,37 @@ export const MarketAnalytics = memo(function MarketAnalytics() {
             </div>
           ))}
         </div>
+        <ResponsiveContainer width="100%" height={120}>
+          <LineChart data={analyticsData.slice(-60)} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
+            <XAxis dataKey="tick" tick={AXIS_TICK} tickLine={false} axisLine={{ stroke: GRID_COLOR }} />
+            <YAxis tick={AXIS_TICK} tickLine={false} axisLine={false} />
+            <Tooltip
+              contentStyle={DARK_TOOLTIP}
+              labelStyle={{ color: '#71717a', fontFamily: 'monospace', fontSize: '10px' }}
+              itemStyle={{ fontFamily: 'monospace', fontSize: '11px' }}
+              cursor={{ stroke: '#3f3f46', strokeDasharray: '3 3' }}
+            />
+            <Line
+              type="monotone"
+              dataKey="tickLatencyMs"
+              stroke="#f59e0b"
+              strokeWidth={1.5}
+              dot={false}
+              activeDot={{ r: 3, fill: '#f59e0b' }}
+              name="Tick Latency (ms)"
+            />
+            <Line
+              type="monotone"
+              dataKey="recallLatencyMs"
+              stroke="#a78bfa"
+              strokeWidth={1.5}
+              dot={false}
+              activeDot={{ r: 3, fill: '#a78bfa' }}
+              name="Memory Recall (ms)"
+            />
+          </LineChart>
+        </ResponsiveContainer>
       </div>
     </div>
   );

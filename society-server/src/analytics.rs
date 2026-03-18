@@ -17,10 +17,17 @@ pub struct AnalyticsPoint {
     pub adoption: u32,
     /// Cumulative simulated revenue derived from token burn (tokens × cost-per-token).
     pub simulated_revenue: f64,
+    /// Actual wall-clock tick execution time in milliseconds.
+    pub tick_latency_ms: u64,
+    /// Total FTS5 recall execution time for this tick in milliseconds.
+    pub recall_latency_ms: u64,
+    /// Current depth of the broadcast channel queue.
+    pub ws_queue_depth: usize,
 }
 
 /// Rolling analytics state — accumulates across ticks.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AnalyticsEngine {
     /// Total tokens burned across all ticks in this scenario.
     pub cumulative_tokens: u64,
@@ -67,6 +74,9 @@ impl AnalyticsEngine {
         tick: u64,
         awake_agents: u32,
         speakers_this_tick: u32,
+        tick_latency_ms: u64,
+        recall_latency_ms: u64,
+        ws_queue_depth: usize,
     ) -> AnalyticsPoint {
         // Tokens: each speaking agent burns 150-400 tokens per turn
         self.drift_seed = self
@@ -129,6 +139,9 @@ impl AnalyticsEngine {
             tokens: self.cumulative_tokens,
             adoption: self.adoption_rate,
             simulated_revenue: self.cumulative_revenue,
+            tick_latency_ms,
+            recall_latency_ms,
+            ws_queue_depth,
         }
     }
 }
@@ -155,19 +168,19 @@ mod tests {
     #[test]
     fn compute_tick_accumulates_tokens() {
         let mut engine = AnalyticsEngine::new();
-        let p1 = engine.compute_tick(1, 100, 3);
+        let p1 = engine.compute_tick(1, 100, 3, 0, 0, 0);
         assert!(p1.tokens > 0);
         let tokens_after_1 = p1.tokens;
 
-        let p2 = engine.compute_tick(2, 100, 4);
+        let p2 = engine.compute_tick(2, 100, 4, 0, 0, 0);
         assert!(p2.tokens > tokens_after_1);
     }
 
     #[test]
     fn reset_clears_all_counters() {
         let mut engine = AnalyticsEngine::new();
-        engine.compute_tick(1, 100, 5);
-        engine.compute_tick(2, 100, 4);
+        engine.compute_tick(1, 100, 5, 0, 0, 0);
+        engine.compute_tick(2, 100, 4, 0, 0, 0);
         assert!(engine.cumulative_tokens > 0);
 
         engine.reset();
@@ -181,7 +194,7 @@ mod tests {
         let mut engine = AnalyticsEngine::new();
         let initial = engine.positive_sentiment;
         for t in 1..=20 {
-            engine.compute_tick(t, 140, 5);
+            engine.compute_tick(t, 140, 5, 0, 0, 0);
         }
         assert!(engine.positive_sentiment > initial);
     }
@@ -190,7 +203,7 @@ mod tests {
     fn adoption_rate_bounded_at_100() {
         let mut engine = AnalyticsEngine::new();
         for t in 1..=500 {
-            engine.compute_tick(t, 150, 5);
+            engine.compute_tick(t, 150, 5, 0, 0, 0);
         }
         assert!(engine.adoption_rate <= 100);
     }

@@ -64,6 +64,7 @@ export function connectWebSocket(): void {
     socket.onopen = () => {
         console.log('[WS] Connected');
         reconnectDelay = RECONNECT_DELAY_MS; // Reset backoff on successful connect
+        useWorldStore.getState().setConnectionStatus('stable');
     };
 
     socket.onmessage = (event) => {
@@ -78,6 +79,7 @@ export function connectWebSocket(): void {
     socket.onclose = () => {
         console.log(`[WS] Disconnected. Reconnecting in ${reconnectDelay}ms...`);
         socket = null;
+        useWorldStore.getState().setConnectionStatus('degraded');
         scheduleReconnect();
     };
 
@@ -114,6 +116,21 @@ export function sendCommand(eventType: string, payload: Record<string, unknown>)
     socket.send(JSON.stringify(envelope));
 }
 
+/**
+ * Request a snapshot save of the current simulation state.
+ * The server will respond with a `snapshotData` event containing the full state.
+ */
+export function saveSnapshot(): void {
+    sendCommand('clientCommand', { type: 'saveSnapshot' });
+}
+
+/**
+ * Load a previously saved snapshot, restoring the simulation to that state.
+ */
+export function loadSnapshot(snapshotData: unknown): void {
+    sendCommand('clientCommand', { type: 'loadSnapshot', snapshot: snapshotData });
+}
+
 // ── Internal helpers ──
 
 function scheduleReconnect(): void {
@@ -137,6 +154,8 @@ function handleServerEvent(envelope: Envelope<Record<string, unknown>>): void {
         if (inboundSeq) {
             expectedInboundSequence = inboundSeq + 1;
         }
+        // Connection fully recovered — clear any degradation warning
+        useWorldStore.getState().setConnectionStatus('stable');
         // Fall through to process the event below.
     } else if (inboundSeq) {
         // ── Sequence gap detection ──
@@ -146,6 +165,7 @@ function handleServerEvent(envelope: Envelope<Record<string, unknown>>): void {
                     `[WS] Sequence gap: expected ${expectedInboundSequence}, got ${inboundSeq}. Dropping payload and requesting resync.`
                 );
                 resyncInFlight = true;
+                useWorldStore.getState().setConnectionStatus('resyncing');
                 sendCommand('clientCommand', { type: 'requestResync' });
             }
             // DROP this payload — wait for the resync bootstrap.
@@ -195,6 +215,28 @@ function handleServerEvent(envelope: Envelope<Record<string, unknown>>): void {
             });
             break;
 
+        case 'chatBatch': {
+            const messages = payload.messages as Array<Record<string, unknown>>;
+            if (messages && messages.length > 0) {
+                store.addMessages(
+                    messages.map((m) => ({
+                        id: m.id as string,
+                        agentId: m.agentId as string,
+                        agentName: m.agentName as string,
+                        agentRole: m.agentRole as string,
+                        agentRoleColor: m.agentRoleColor as string,
+                        agentAvatarInitials: m.agentAvatarInitials as string,
+                        channelId: m.channelId as string,
+                        content: m.content as string,
+                        timestamp: m.timestamp as string,
+                        tick: m.tick as number,
+                        isSystemMessage: (m.isSystemMessage as boolean) ?? false,
+                    }))
+                );
+            }
+            break;
+        }
+
         case 'graphSnapshot': {
             // Server nests graph data under `payload.data` per events.rs GraphSnapshot { data }
             const graphData = payload.data as Record<string, unknown> | undefined;
@@ -240,6 +282,9 @@ function handleServerEvent(envelope: Envelope<Record<string, unknown>>): void {
                 tokens: payload.tokens as number,
                 adoption: payload.adoption as number,
                 simulatedRevenue: payload.simulatedRevenue as number,
+                tickLatencyMs: (payload.tickLatencyMs as number) ?? 0,
+                recallLatencyMs: (payload.recallLatencyMs as number) ?? 0,
+                wsQueueDepth: (payload.wsQueueDepth as number) ?? 0,
             });
             break;
 
@@ -278,6 +323,23 @@ function handleServerEvent(envelope: Envelope<Record<string, unknown>>): void {
         case 'echo':
             console.log('[WS] Echo:', payload.message);
             break;
+
+        case 'snapshotData': {
+            console.log('[WS] Snapshot received, triggering download');
+            const blob = new Blob(
+                [JSON.stringify(payload.snapshot, null, 2)],
+                { type: 'application/json' }
+            );
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `society-snapshot-${Date.now()}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            break;
+        }
 
         default:
             console.log('[WS] Unknown event type:', type, payload);

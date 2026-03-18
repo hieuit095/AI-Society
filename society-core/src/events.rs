@@ -55,6 +55,11 @@ pub enum ServerEvent {
         msg: ChatMsg,
     },
 
+    /// Batched chat messages — all messages generated in a single tick
+    /// coalesced into one WebSocket frame for backpressure management.
+    #[serde(rename_all = "camelCase")]
+    ChatBatch { messages: Vec<ChatMsg> },
+
     /// Full force-graph snapshot of the agent society (emitted periodically).
     #[serde(rename_all = "camelCase")]
     GraphSnapshot { data: GraphSnapshot },
@@ -87,6 +92,9 @@ pub enum ServerEvent {
         tokens: u64,
         adoption: u32,
         simulated_revenue: f64,
+        tick_latency_ms: u64,
+        recall_latency_ms: u64,
+        ws_queue_depth: usize,
     },
 
     /// Batched agent status changes emitted once per tick.
@@ -101,6 +109,10 @@ pub enum ServerEvent {
         citizen_count: u32,
         new_total: u32,
     },
+
+    /// Full world state snapshot sent in response to a `SaveSnapshot` command.
+    #[serde(rename_all = "camelCase")]
+    SnapshotData { snapshot: serde_json::Value },
 }
 
 // ─────────────────────────────────────────────
@@ -139,6 +151,13 @@ pub enum ClientCommand {
     /// Spawn a batch of agents with a controlled elite ratio.
     #[serde(rename_all = "camelCase")]
     SpawnBulk { count: u32, elite_ratio: f32 },
+
+    /// Save the current simulation state as a snapshot.
+    SaveSnapshot,
+
+    /// Load a previously saved simulation state from a snapshot.
+    #[serde(rename_all = "camelCase")]
+    LoadSnapshot { snapshot: serde_json::Value },
 }
 
 /// The action payload for `SimulationControl` commands.

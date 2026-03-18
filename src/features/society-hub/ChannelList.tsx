@@ -1,7 +1,6 @@
 /**
  * @file ChannelList.tsx
  * @description Displays the currently available society text channels and local navigation state.
- * @ai_context This remains a client-side navigator today, but its selected channel will eventually map to websocket-scoped message subscriptions.
  */
 import { memo } from 'react';
 import { Hash, Volume2 } from 'lucide-react';
@@ -12,13 +11,17 @@ import { cn } from '../../lib/utils';
 const VOICE_CHANNELS = ['board-standup', 'war-room'];
 
 export const ChannelList = memo(function ChannelList() {
-  const { activeChannel, setActiveChannel, channels } = useWorldStore(
+  const { activeChannel, setActiveChannel, channels, awakeAgents, messagesByChannel } = useWorldStore(
     useShallow((state) => ({
       activeChannel: state.activeChannel,
       setActiveChannel: state.setActiveChannel,
       channels: state.channels,
+      awakeAgents: state.awakeAgents,
+      messagesByChannel: state.messagesByChannel,
     }))
   );
+
+  const activeMessageCount = messagesByChannel[activeChannel]?.length ?? 0;
 
   return (
     <div className="w-48 shrink-0 bg-zinc-900/50 border-r border-zinc-800/50 flex flex-col overflow-hidden">
@@ -72,11 +75,11 @@ export const ChannelList = memo(function ChannelList() {
         <div className="text-[10px] font-mono text-zinc-600 space-y-1">
           <div className="flex justify-between">
             <span>AGENTS ONLINE</span>
-            <span className="text-emerald-500">842</span>
+            <span className="text-emerald-500">{awakeAgents.toLocaleString()}</span>
           </div>
           <div className="flex justify-between">
-            <span>MSG RATE</span>
-            <span className="text-amber-500">~3/s</span>
+            <span>CHANNEL MSGS</span>
+            <span className="text-amber-500">{activeMessageCount.toLocaleString()}</span>
           </div>
         </div>
       </div>

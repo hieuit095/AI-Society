@@ -1,22 +1,10 @@
 //! WebSocket handler for the ZeroClaw society server.
 //!
-//! ## Architecture (Phase 4)
-//!
-//! Each WebSocket connection spawns two concurrent tasks:
-//! 1. **Outbound**: Subscribes to the broadcast channel and forwards all events to the client.
-//! 2. **Inbound**: Reads client commands and mutates shared `WorldState`.
-//!
-//! Events broadcast per tick:
-//! - `tick.sync` — heartbeat with counters
-//! - `chat.message` — agent messages emitted during the tick
-//! - `graph.snapshot` — periodic force-graph data (every 5th tick)
-//!
-//! On-demand events:
-//! - `world.bootstrap` — sent once on connection
-//! - `agent.detail` — sent in response to `inspectAgent` command
+//! Each connection subscribes to the shared broadcast stream and can also
+//! issue commands that mutate the authoritative Rust world state.
 
 use crate::memory::MemoryStore;
-use crate::world::{EventTx, SharedWorld};
+use crate::world::{current_sequence, next_sequence, EventTx, SharedSequence, SharedWorld};
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
@@ -42,6 +30,19 @@ pub struct AppState {
     pub world: SharedWorld,
     pub event_tx: EventTx,
     pub shared_memory: SharedMemory,
+    pub sequence: SharedSequence,
+}
+
+fn broadcast_event(
+    event_tx: &EventTx,
+    sequence: &SharedSequence,
+    event_type: &'static str,
+    payload: ServerEvent,
+) {
+    let envelope = Envelope::new(next_sequence(sequence), event_type, payload);
+    if let Ok(json) = serde_json::to_string(&envelope) {
+        let _ = event_tx.send(json);
+    }
 }
 
 /// Axum handler that upgrades an HTTP request to a WebSocket connection.
@@ -54,22 +55,23 @@ pub async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> 
 async fn handle_socket(socket: WebSocket, state: AppState) {
     info!("WebSocket connection established");
 
-    let (mut ws_sink, ws_stream) = socket.split();
+    let (mut ws_sink, mut ws_stream) = socket.split();
+    let mut rx = state.event_tx.subscribe();
 
-    // ── Bootstrap: send current world state ──
-    {
+    let bootstrap = {
         let world = state.world.read().await;
-        let bootstrap = Envelope::new(0, "world.bootstrap", world.to_bootstrap());
-        if let Ok(json) = serde_json::to_string(&bootstrap) {
-            if ws_sink.send(Message::Text(json.into())).await.is_err() {
-                return;
-            }
+        Envelope::new(
+            current_sequence(&state.sequence),
+            "world.bootstrap",
+            world.to_bootstrap(),
+        )
+    };
+    if let Ok(json) = serde_json::to_string(&bootstrap) {
+        if ws_sink.send(Message::Text(json.into())).await.is_err() {
+            return;
         }
     }
 
-    let mut rx = state.event_tx.subscribe();
-
-    // ── Outbound task: forward broadcast events with backpressure ──
     let outbound = tokio::spawn(async move {
         loop {
             match rx.recv().await {
@@ -79,31 +81,24 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                     }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                    tracing::warn!(
+                    warn!(
                         skipped,
-                        "WS client lagging — {} events dropped by broadcast",
+                        "WS client lagging - {} events dropped by broadcast",
                         skipped
                     );
-                    // Continue: the channel has already advanced past the lost events.
-                    // Critical events (bootstrap, chat.batch) will be in the next batch.
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             }
         }
     });
 
-    // ── Inbound task: read client commands ──
-    let world = state.world.clone();
-    let event_tx = state.event_tx.clone();
     let inbound = tokio::spawn({
-        let world = world.clone();
-        let event_tx = event_tx.clone();
+        let world = state.world.clone();
+        let event_tx = state.event_tx.clone();
         let shared_memory = state.shared_memory.clone();
-        let mut ws_stream = ws_stream;
+        let sequence = state.sequence.clone();
 
         async move {
-            let mut sequence: u64 = 1000;
-
             while let Some(Ok(msg)) = ws_stream.next().await {
                 match msg {
                     Message::Text(text) => {
@@ -120,67 +115,66 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                         match envelope.payload {
                             ClientCommand::Echo { message } => {
                                 info!("Echo: {message}");
-                                sequence += 1;
-                                let response = Envelope::new(
-                                    sequence,
+                                broadcast_event(
+                                    &event_tx,
+                                    &sequence,
                                     "echo",
-                                    ServerEvent::Echo {
-                                        message: message.clone(),
-                                    },
+                                    ServerEvent::Echo { message },
                                 );
-                                if let Ok(json) = serde_json::to_string(&response) {
-                                    let _ = event_tx.send(json);
-                                }
                             }
                             ClientCommand::SimulationControl { action } => {
-                                let mut w = world.write().await;
-                                match action {
-                                    SimulationAction::Play => {
-                                        info!("▶️  Simulation PLAY");
-                                        w.is_playing = true;
+                                let sync = {
+                                    let mut w = world.write().await;
+                                    match action {
+                                        SimulationAction::Play => {
+                                            info!("Simulation PLAY");
+                                            w.is_playing = true;
+                                        }
+                                        SimulationAction::Pause => {
+                                            info!("Simulation PAUSE");
+                                            w.is_playing = false;
+                                        }
                                     }
-                                    SimulationAction::Pause => {
-                                        info!("⏸️  Simulation PAUSE");
-                                        w.is_playing = false;
-                                    }
-                                }
+                                    w.to_tick_sync()
+                                };
 
-                                sequence += 1;
-                                let sync = Envelope::new(sequence, "tick.sync", w.to_tick_sync());
-                                if let Ok(json) = serde_json::to_string(&sync) {
-                                    let _ = event_tx.send(json);
-                                }
+                                broadcast_event(
+                                    &event_tx,
+                                    &sequence,
+                                    "tick.sync",
+                                    sync,
+                                );
                             }
                             ClientCommand::InspectAgent { agent_id } => {
-                                info!("🔍 Inspect agent: {agent_id}");
-                                let w = world.read().await;
-                                if let Some(agent) =
-                                    w.agents.iter().find(|a| a.id.as_str() == agent_id)
-                                {
-                                    let role_name = agent.profile.role.display_name().to_string();
-                                    let detail = AgentDetailPayload {
-                                        agent_id: agent.id.as_str().to_string(),
-                                        name: agent.name.clone(),
-                                        role: role_name.clone(),
-                                        role_color: agent.profile.role.color_key().to_string(),
-                                        avatar_initials: agent.name[..2].to_uppercase(),
-                                        status: format!("{:?}", agent.status).to_lowercase(),
-                                        model: agent.provider.model.clone(),
-                                        tier: format!("{:?}", agent.provider.tier).to_lowercase(),
-                                        tokens_per_tick: agent.last_token_burn,
-                                        tools: agent.profile.tool_bounds.clone(),
-                                        thought_log: agent.thought_log.iter().cloned().collect(),
-                                    };
+                                info!("Inspect agent: {agent_id}");
+                                let detail = {
+                                    let w = world.read().await;
+                                    w.agents
+                                        .iter()
+                                        .find(|agent| agent.id.as_str() == agent_id)
+                                        .map(|agent| AgentDetailPayload {
+                                            agent_id: agent.id.as_str().to_string(),
+                                            name: agent.name.clone(),
+                                            role: agent.profile.role.display_name().to_string(),
+                                            role_color: agent.profile.role.color_key().to_string(),
+                                            avatar_initials: agent.name[..2].to_uppercase(),
+                                            status: format!("{:?}", agent.status).to_lowercase(),
+                                            last_tick: agent.last_tick,
+                                            model: agent.provider.model.clone(),
+                                            tier: format!("{:?}", agent.provider.tier).to_lowercase(),
+                                            tokens_per_tick: agent.last_token_burn,
+                                            tools: agent.profile.tool_bounds.clone(),
+                                            thought_log: agent.thought_log.iter().cloned().collect(),
+                                        })
+                                };
 
-                                    sequence += 1;
-                                    let envelope = Envelope::new(
-                                        sequence,
+                                if let Some(detail) = detail {
+                                    broadcast_event(
+                                        &event_tx,
+                                        &sequence,
                                         "agent.detail",
                                         ServerEvent::AgentDetail { detail },
                                     );
-                                    if let Ok(json) = serde_json::to_string(&envelope) {
-                                        let _ = event_tx.send(json);
-                                    }
                                 } else {
                                     warn!("Agent not found: {agent_id}");
                                 }
@@ -191,15 +185,16 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                                 context,
                             } => {
                                 info!(
-                                    "🌱 Seed injection: title=\"{title}\", audience=\"{audience}\""
+                                    "Seed injection: title=\"{title}\", audience=\"{audience}\""
                                 );
 
-                                let mut w = world.write().await;
+                                let (seed_id, total_agents, bootstrap) = {
+                                    let mut w = world.write().await;
+                                    let seed_id = w.apply_seed();
+                                    w.is_playing = true;
+                                    (seed_id, w.total_agents, w.to_bootstrap())
+                                };
 
-                                // 1. Apply seed — resets tick, statuses, generates new seed_id
-                                let seed_id = w.apply_seed();
-
-                                // 1b. Purge SQLite memory store
                                 {
                                     let mem = shared_memory.lock().await;
                                     if let Err(e) = mem.purge_all() {
@@ -207,9 +202,8 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                                     }
                                 }
 
-                                // 2. Build system directive message
                                 let system_msg = ChatMsg {
-                                    id: format!("sys-seed-{}", seed_id),
+                                    id: format!("sys-seed-{seed_id}"),
                                     agent_id: "system".to_string(),
                                     agent_name: "SYSTEM".to_string(),
                                     agent_role: "DIRECTIVE".to_string(),
@@ -217,23 +211,17 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                                     agent_avatar_initials: "SY".to_string(),
                                     channel_id: "board-room".to_string(),
                                     content: format!(
-                                        ">>> NEW SEED DIRECTIVE INJECTED: \"{}\". \
-                                         TARGET AUDIENCE: {}. \
-                                         CONTEXT: {}. \
-                                         ALL PRIOR CONTEXT PURGED. \
-                                         RE-INITIALIZING {} AGENTS. \
-                                         SIMULATION CLOCK RESET TO T+0.",
-                                        title, audience, context, w.total_agents
+                                        ">>> NEW SEED DIRECTIVE INJECTED: \"{}\". TARGET AUDIENCE: {}. CONTEXT: {}. ALL PRIOR CONTEXT PURGED. RE-INITIALIZING {} AGENTS. SIMULATION CLOCK RESET TO T+0.",
+                                        title, audience, context, total_agents
                                     ),
                                     timestamp: chrono::Utc::now().to_rfc3339(),
                                     tick: 0,
                                     is_system_message: true,
                                 };
 
-                                // 3. Broadcast SeedApplied
-                                sequence += 1;
-                                let seed_event = Envelope::new(
-                                    sequence,
+                                broadcast_event(
+                                    &event_tx,
+                                    &sequence,
                                     "seed.applied",
                                     ServerEvent::SeedApplied {
                                         seed_id: seed_id.clone(),
@@ -241,233 +229,196 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                                         system_message: system_msg,
                                     },
                                 );
-                                if let Ok(json) = serde_json::to_string(&seed_event) {
-                                    let _ = event_tx.send(json);
-                                }
+                                broadcast_event(
+                                    &event_tx,
+                                    &sequence,
+                                    "world.bootstrap",
+                                    bootstrap,
+                                );
 
-                                // 4. Broadcast fresh WorldBootstrap
-                                sequence += 1;
-                                let bootstrap =
-                                    Envelope::new(sequence, "world.bootstrap", w.to_bootstrap());
-                                if let Ok(json) = serde_json::to_string(&bootstrap) {
-                                    let _ = event_tx.send(json);
-                                }
-
-                                // 5. Resume tick loop
-                                w.is_playing = true;
                                 info!(
-                                    "🌱 Seed applied: seed_id={}, title=\"{}\", agents reset, tick loop resumed",
+                                    "Seed applied: seed_id={}, title=\"{}\", agents reset, tick loop resumed",
                                     seed_id, title
                                 );
                             }
                             ClientCommand::RequestResync => {
-                                info!("🔄 Client requested resync");
-                                let w = world.read().await;
+                                info!("Client requested resync");
+                                let (bootstrap, graph_data) = {
+                                    let w = world.read().await;
+                                    (w.to_bootstrap(), w.to_graph_snapshot())
+                                };
 
-                                // Send fresh bootstrap
-                                sequence += 1;
-                                let bootstrap =
-                                    Envelope::new(sequence, "world.bootstrap", w.to_bootstrap());
-                                if let Ok(json) = serde_json::to_string(&bootstrap) {
-                                    let _ = event_tx.send(json);
-                                }
-
-                                // Send fresh graph snapshot
-                                let graph_data = w.to_graph_snapshot();
-                                sequence += 1;
-                                let graph_envelope = Envelope::new(
-                                    sequence,
+                                broadcast_event(
+                                    &event_tx,
+                                    &sequence,
+                                    "world.bootstrap",
+                                    bootstrap,
+                                );
+                                broadcast_event(
+                                    &event_tx,
+                                    &sequence,
                                     "graph.snapshot",
                                     ServerEvent::GraphSnapshot { data: graph_data },
                                 );
-                                if let Ok(json) = serde_json::to_string(&graph_envelope) {
-                                    let _ = event_tx.send(json);
-                                }
                             }
                             ClientCommand::SpawnSingle => {
-                                info!("🧬 Single agent spawn requested");
-                                let mut w = world.write().await;
+                                info!("Single agent spawn requested");
+                                let (new_total, sync, graph_data) = {
+                                    let mut w = world.write().await;
+                                    let next_idx = w.agents.len() as u32 + 1;
+                                    let mut drift = next_idx as u64
+                                        ^ std::time::SystemTime::now()
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .unwrap_or_default()
+                                            .as_nanos() as u64;
 
-                                let next_idx = w.agents.len() as u32 + 1;
-                                let mut drift = next_idx as u64
-                                    ^ std::time::SystemTime::now()
-                                        .duration_since(std::time::UNIX_EPOCH)
-                                        .unwrap_or_default()
-                                        .as_nanos() as u64;
+                                    let agent = crate::genesis::generate_random_agent(
+                                        society_core::AgentTier::Citizen,
+                                        next_idx,
+                                        &mut drift,
+                                    );
+                                    w.agents.push(agent);
+                                    w.total_agents = w.agents.len() as u32;
 
-                                let agent = crate::genesis::generate_random_agent(
-                                    society_core::AgentTier::Citizen,
-                                    next_idx,
-                                    &mut drift,
-                                );
-                                w.agents.push(agent);
-                                w.total_agents = w.agents.len() as u32;
+                                    (w.total_agents, w.to_tick_sync(), w.to_graph_snapshot())
+                                };
 
-                                // Broadcast genesis result
-                                sequence += 1;
-                                let result = Envelope::new(
-                                    sequence,
+                                broadcast_event(
+                                    &event_tx,
+                                    &sequence,
                                     "genesis.result",
                                     ServerEvent::GenesisResult {
                                         spawned_count: 1,
                                         elite_count: 0,
                                         citizen_count: 1,
-                                        new_total: w.total_agents,
+                                        new_total,
                                     },
                                 );
-                                if let Ok(json) = serde_json::to_string(&result) {
-                                    let _ = event_tx.send(json);
-                                }
-
-                                // Broadcast updated tick sync
-                                sequence += 1;
-                                let sync = Envelope::new(sequence, "tick.sync", w.to_tick_sync());
-                                if let Ok(json) = serde_json::to_string(&sync) {
-                                    let _ = event_tx.send(json);
-                                }
-
-                                // Broadcast fresh graph
-                                let graph_data = w.to_graph_snapshot();
-                                sequence += 1;
-                                let graph = Envelope::new(
-                                    sequence,
+                                broadcast_event(&event_tx, &sequence, "tick.sync", sync);
+                                broadcast_event(
+                                    &event_tx,
+                                    &sequence,
                                     "graph.snapshot",
                                     ServerEvent::GraphSnapshot { data: graph_data },
                                 );
-                                if let Ok(json) = serde_json::to_string(&graph) {
-                                    let _ = event_tx.send(json);
-                                }
                             }
                             ClientCommand::SpawnBulk { count, elite_ratio } => {
                                 let clamped_count = count.min(1000);
                                 info!(
-                                    "🧬 Bulk spawn: count={}, elite_ratio={:.2}",
+                                    "Bulk spawn: count={}, elite_ratio={:.2}",
                                     clamped_count, elite_ratio
                                 );
-                                let mut w = world.write().await;
 
-                                let starting_idx = w.agents.len() as u32 + 1;
-                                let mut drift = starting_idx as u64
-                                    ^ std::time::SystemTime::now()
-                                        .duration_since(std::time::UNIX_EPOCH)
-                                        .unwrap_or_default()
-                                        .as_nanos() as u64;
+                                let (elite_count, citizen_count, new_total, sync, graph_data) = {
+                                    let mut w = world.write().await;
+                                    let starting_idx = w.agents.len() as u32 + 1;
+                                    let mut drift = starting_idx as u64
+                                        ^ std::time::SystemTime::now()
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .unwrap_or_default()
+                                            .as_nanos() as u64;
 
-                                let new_agents = crate::genesis::spawn_batch(
-                                    clamped_count,
-                                    elite_ratio,
-                                    starting_idx,
-                                    &mut drift,
-                                );
+                                    let new_agents = crate::genesis::spawn_batch(
+                                        clamped_count,
+                                        elite_ratio,
+                                        starting_idx,
+                                        &mut drift,
+                                    );
 
-                                let elite_count = new_agents
-                                    .iter()
-                                    .filter(|a| a.provider.tier == society_core::AgentTier::Elite)
-                                    .count()
-                                    as u32;
-                                let citizen_count = clamped_count - elite_count;
+                                    let elite_count = new_agents
+                                        .iter()
+                                        .filter(|agent| {
+                                            agent.provider.tier == society_core::AgentTier::Elite
+                                        })
+                                        .count() as u32;
+                                    let citizen_count = clamped_count - elite_count;
 
-                                w.agents.extend(new_agents);
-                                w.total_agents = w.agents.len() as u32;
+                                    w.agents.extend(new_agents);
+                                    w.total_agents = w.agents.len() as u32;
 
-                                // Broadcast genesis result
-                                sequence += 1;
-                                let result = Envelope::new(
-                                    sequence,
+                                    (
+                                        elite_count,
+                                        citizen_count,
+                                        w.total_agents,
+                                        w.to_tick_sync(),
+                                        w.to_graph_snapshot(),
+                                    )
+                                };
+
+                                broadcast_event(
+                                    &event_tx,
+                                    &sequence,
                                     "genesis.result",
                                     ServerEvent::GenesisResult {
                                         spawned_count: clamped_count,
                                         elite_count,
                                         citizen_count,
-                                        new_total: w.total_agents,
+                                        new_total,
                                     },
                                 );
-                                if let Ok(json) = serde_json::to_string(&result) {
-                                    let _ = event_tx.send(json);
-                                }
-
-                                // Broadcast updated tick sync
-                                sequence += 1;
-                                let sync = Envelope::new(sequence, "tick.sync", w.to_tick_sync());
-                                if let Ok(json) = serde_json::to_string(&sync) {
-                                    let _ = event_tx.send(json);
-                                }
-
-                                // Broadcast fresh graph
-                                let graph_data = w.to_graph_snapshot();
-                                sequence += 1;
-                                let graph = Envelope::new(
-                                    sequence,
+                                broadcast_event(&event_tx, &sequence, "tick.sync", sync);
+                                broadcast_event(
+                                    &event_tx,
+                                    &sequence,
                                     "graph.snapshot",
                                     ServerEvent::GraphSnapshot { data: graph_data },
                                 );
-                                if let Ok(json) = serde_json::to_string(&graph) {
-                                    let _ = event_tx.send(json);
-                                }
                             }
                             ClientCommand::SaveSnapshot => {
-                                info!("💾 Snapshot save requested");
-                                let w = world.read().await;
-                                let snapshot_data = w.generate_snapshot();
+                                info!("Snapshot save requested");
+                                let snapshot_data = {
+                                    let w = world.read().await;
+                                    w.generate_snapshot()
+                                };
 
-                                sequence += 1;
-                                let envelope = Envelope::new(
-                                    sequence,
+                                broadcast_event(
+                                    &event_tx,
+                                    &sequence,
                                     "snapshot.data",
                                     ServerEvent::SnapshotData {
                                         snapshot: snapshot_data,
                                     },
                                 );
-                                if let Ok(json) = serde_json::to_string(&envelope) {
-                                    let _ = event_tx.send(json);
-                                }
-                                info!("💾 Snapshot sent to client");
+                                info!("Snapshot sent to client");
                             }
                             ClientCommand::LoadSnapshot { snapshot } => {
-                                info!("📂 Snapshot load requested");
-                                let mut w = world.write().await;
-
-                                match w.hydrate_from_snapshot(&snapshot) {
-                                    Ok(()) => {
-                                        info!("📂 World state hydrated from snapshot");
-
-                                        // Purge SQLite to match the restored seed
-                                        {
-                                            let mem = shared_memory.lock().await;
-                                            if let Err(e) = mem.purge_all() {
-                                                warn!("Failed to purge memory on hydration: {e}");
-                                            }
+                                info!("Snapshot load requested");
+                                let restored = {
+                                    let mut w = world.write().await;
+                                    match w.hydrate_from_snapshot(&snapshot) {
+                                        Ok(()) => Some((w.to_bootstrap(), w.to_graph_snapshot())),
+                                        Err(e) => {
+                                            warn!("Snapshot hydration failed: {e}");
+                                            None
                                         }
-
-                                        // Broadcast fresh bootstrap to all clients
-                                        sequence += 1;
-                                        let bootstrap = Envelope::new(
-                                            sequence,
-                                            "world.bootstrap",
-                                            w.to_bootstrap(),
-                                        );
-                                        if let Ok(json) = serde_json::to_string(&bootstrap) {
-                                            let _ = event_tx.send(json);
-                                        }
-
-                                        // Broadcast fresh graph
-                                        let graph_data = w.to_graph_snapshot();
-                                        sequence += 1;
-                                        let graph = Envelope::new(
-                                            sequence,
-                                            "graph.snapshot",
-                                            ServerEvent::GraphSnapshot { data: graph_data },
-                                        );
-                                        if let Ok(json) = serde_json::to_string(&graph) {
-                                            let _ = event_tx.send(json);
-                                        }
-
-                                        info!("📂 Snapshot hydration complete — simulation paused");
                                     }
-                                    Err(e) => {
-                                        warn!("📂 Snapshot hydration failed: {e}");
+                                };
+
+                                let Some((bootstrap, graph_data)) = restored else {
+                                    continue;
+                                };
+
+                                {
+                                    let mem = shared_memory.lock().await;
+                                    if let Err(e) = mem.purge_all() {
+                                        warn!("Failed to purge memory on hydration: {e}");
                                     }
                                 }
+
+                                broadcast_event(
+                                    &event_tx,
+                                    &sequence,
+                                    "world.bootstrap",
+                                    bootstrap,
+                                );
+                                broadcast_event(
+                                    &event_tx,
+                                    &sequence,
+                                    "graph.snapshot",
+                                    ServerEvent::GraphSnapshot { data: graph_data },
+                                );
+
+                                info!("Snapshot hydration complete - simulation paused");
                             }
                         }
                     }
@@ -482,8 +433,8 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     });
 
     tokio::select! {
-        _ = outbound => {},
-        _ = inbound => {},
+        _ = outbound => {}
+        _ = inbound => {}
     }
 
     info!("WebSocket connection closed");

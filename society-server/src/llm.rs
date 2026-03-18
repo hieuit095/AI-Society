@@ -41,6 +41,14 @@ pub struct SpeakerContext {
     pub fallback_template_idx: usize,
 }
 
+/// Provider response metadata captured from a completed inference turn.
+#[derive(Debug, Clone)]
+pub struct InferenceResult {
+    pub content: String,
+    pub total_tokens: u32,
+    pub model: String,
+}
+
 /// Errors that can occur during LLM inference.
 #[derive(Debug)]
 pub enum LlmError {
@@ -81,7 +89,13 @@ struct OllamaRequest {
 
 #[derive(Deserialize)]
 struct OllamaResponse {
+    #[serde(default)]
+    model: String,
     response: String,
+    #[serde(default)]
+    prompt_eval_count: u32,
+    #[serde(default)]
+    eval_count: u32,
 }
 
 // ─────────────────────────────────────────────
@@ -104,7 +118,10 @@ struct OpenAiMessage {
 
 #[derive(Deserialize)]
 struct OpenAiResponse {
+    #[serde(default)]
+    model: String,
     choices: Vec<OpenAiChoice>,
+    usage: Option<OpenAiUsage>,
 }
 
 #[derive(Deserialize)]
@@ -117,12 +134,17 @@ struct OpenAiMessageResponse {
     content: String,
 }
 
+#[derive(Deserialize)]
+struct OpenAiUsage {
+    total_tokens: Option<u32>,
+}
+
 /// Execute a single LLM inference call for the given speaker context.
 ///
 /// - If the endpoint contains `localhost` or `11434`, routes to the **Ollama** API.
 /// - Otherwise, routes to the **OpenAI-compatible** `/chat/completions` endpoint.
 /// - On any error (network, timeout, parse), returns a fallback template string.
-pub async fn infer(ctx: &SpeakerContext) -> String {
+pub async fn infer(ctx: &SpeakerContext) -> InferenceResult {
     let client = Client::builder()
         .timeout(LLM_TIMEOUT)
         .build()
@@ -139,7 +161,7 @@ pub async fn infer(ctx: &SpeakerContext) -> String {
         };
 
         match result {
-            Ok(text) if !text.trim().is_empty() => return text,
+            Ok(output) if !output.content.trim().is_empty() => return output,
             Ok(_) => {
                 last_error = Some(LlmError::ParseError("empty response".to_string()));
             }
@@ -167,7 +189,11 @@ pub async fn infer(ctx: &SpeakerContext) -> String {
     }
 
     let idx = ctx.fallback_template_idx % MESSAGE_TEMPLATES.len();
-    MESSAGE_TEMPLATES[idx].to_string()
+    InferenceResult {
+        content: MESSAGE_TEMPLATES[idx].to_string(),
+        total_tokens: 0,
+        model: ctx.model.clone(),
+    }
 }
 
 /// Detect whether the endpoint points to a local Ollama instance.
@@ -176,7 +202,10 @@ fn is_ollama_endpoint(endpoint: &str) -> bool {
 }
 
 /// Issue a POST to the Ollama `/api/generate` endpoint.
-async fn infer_ollama(client: &Client, ctx: &SpeakerContext) -> Result<String, LlmError> {
+async fn infer_ollama(
+    client: &Client,
+    ctx: &SpeakerContext,
+) -> Result<InferenceResult, LlmError> {
     let url = format!("{}/generate", ctx.provider_endpoint.trim_end_matches('/'));
 
     let user_prompt = format!(
@@ -211,11 +240,22 @@ async fn infer_ollama(client: &Client, ctx: &SpeakerContext) -> Result<String, L
         .await
         .map_err(|e| LlmError::ParseError(e.to_string()))?;
 
-    Ok(parsed.response.trim().to_string())
+    Ok(InferenceResult {
+        content: parsed.response.trim().to_string(),
+        total_tokens: parsed.prompt_eval_count + parsed.eval_count,
+        model: if parsed.model.is_empty() {
+            ctx.model.clone()
+        } else {
+            parsed.model
+        },
+    })
 }
 
 /// Issue a POST to an OpenAI-compatible `/chat/completions` endpoint.
-async fn infer_openai(client: &Client, ctx: &SpeakerContext) -> Result<String, LlmError> {
+async fn infer_openai(
+    client: &Client,
+    ctx: &SpeakerContext,
+) -> Result<InferenceResult, LlmError> {
     let url = format!(
         "{}/chat/completions",
         ctx.provider_endpoint.trim_end_matches('/')
@@ -271,7 +311,19 @@ async fn infer_openai(client: &Client, ctx: &SpeakerContext) -> Result<String, L
     parsed
         .choices
         .first()
-        .map(|c| c.message.content.trim().to_string())
+        .map(|c| InferenceResult {
+            content: c.message.content.trim().to_string(),
+            total_tokens: parsed
+                .usage
+                .as_ref()
+                .and_then(|usage| usage.total_tokens)
+                .unwrap_or_default(),
+            model: if parsed.model.is_empty() {
+                ctx.model.clone()
+            } else {
+                parsed.model.clone()
+            },
+        })
         .ok_or_else(|| LlmError::ParseError("no choices in response".to_string()))
 }
 
@@ -301,6 +353,7 @@ mod tests {
 
         let result = infer(&ctx).await;
         // Should return the first MESSAGE_TEMPLATE as fallback
-        assert_eq!(result, MESSAGE_TEMPLATES[0]);
+        assert_eq!(result.content, MESSAGE_TEMPLATES[0]);
+        assert_eq!(result.total_tokens, 0);
     }
 }

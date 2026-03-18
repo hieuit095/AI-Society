@@ -1,9 +1,8 @@
 /**
  * @file SeedModal.tsx
- * @description Captures a new scenario seed and performs the prototype's local simulation reset.
- * @ai_context This modal is the frontend contract for the future Rust `seed.inject` command and `seed.applied` response cycle.
+ * @description Captures a new scenario seed and dispatches it to the Rust backend.
  */
-import { memo, useCallback, useState } from 'react';
+import { memo, useCallback, useEffect, useState } from 'react';
 import { X, FlaskConical, Zap, AlertTriangle } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useWorldStore } from '../../store/useWorldStore';
@@ -32,36 +31,30 @@ export const SeedModal = memo(function SeedModal() {
   const [context, setContext] = useState('');
   const [isExecuting, setIsExecuting] = useState(false);
 
-  if (!isSeedModalOpen) return null;
+  useEffect(() => {
+    if (!isSeedModalOpen) {
+      setIsExecuting(false);
+    }
+  }, [isSeedModalOpen]);
 
-  // ==========================================
-  // 🔗 [RUST-BINDING-POINT]: WEBSOCKET TARGET
-  // TODO (Backend Phase): Replace this Zustand mock logic with incoming/outgoing WebSockets from the ZeroClaw Rust server.
-  // Expected Payload: { type: 'seed.inject', title: string, audience: string, context: string }
-  // ==========================================
   const handleExecute = useCallback(() => {
     setIsExecuting(true);
-    // Send the seed injection command to the Rust server.
-    // The modal will be closed by the server's `seedApplied` event
-    // via `handleSeedApplied` in the Zustand store.
-    // NO local state mutation is performed — Rust owns the reset.
     sendCommand('seed.inject', {
       type: 'injectSeed',
       title: title || 'Unnamed Scenario',
       audience: audience || 'General',
       context: context || 'No additional context provided.',
     });
-    // Reset form fields after dispatch — loading state remains
-    // until the server broadcasts `seedApplied` which closes the modal.
     setTitle('');
     setAudience('');
     setContext('');
-    setIsExecuting(false);
-  }, [title, audience, context]);
+  }, [audience, context, title]);
 
-  const handleBackdropClick = useCallback((e: React.MouseEvent) => {
-    if (e.target === e.currentTarget) closeSeedModal();
+  const handleBackdropClick = useCallback((event: React.MouseEvent) => {
+    if (event.target === event.currentTarget) closeSeedModal();
   }, [closeSeedModal]);
+
+  if (!isSeedModalOpen) return null;
 
   return (
     <div
@@ -73,11 +66,11 @@ export const SeedModal = memo(function SeedModal() {
         <div className="absolute top-0 left-1/4 w-1/2 h-px bg-gradient-to-r from-transparent via-emerald-400/50 to-transparent blur-sm" />
 
         <div className="absolute inset-0 pointer-events-none overflow-hidden select-none">
-          {['01101000 01100101', '00100000 01110111', '01101111 01110010', '01101100 01100100', '00100000 01110011', '01110100 01100001'].map((bin, i) => (
+          {['01101000 01100101', '00100000 01110111', '01101111 01110010', '01101100 01100100', '00100000 01110011', '01110100 01100001'].map((bin, index) => (
             <div
-              key={i}
+              key={index}
               className="absolute text-emerald-900/20 font-mono text-[10px] whitespace-nowrap"
-              style={{ top: `${15 + i * 14}%`, left: `${20 + i * 10}%`, transform: 'rotate(-2deg)' }}
+              style={{ top: `${15 + index * 14}%`, left: `${20 + index * 10}%`, transform: 'rotate(-2deg)' }}
             >
               {bin}
             </div>
@@ -113,7 +106,7 @@ export const SeedModal = memo(function SeedModal() {
               <input
                 type="text"
                 value={title}
-                onChange={(e) => setTitle(e.target.value)}
+                onChange={(event) => setTitle(event.target.value)}
                 placeholder="e.g., Post-AGI Consumer Economy v4.2"
                 className="w-full bg-zinc-900 border border-zinc-700 focus:border-emerald-500 text-emerald-400 placeholder:text-zinc-700 font-mono text-sm p-2.5 rounded outline-none transition-colors duration-200"
               />
@@ -125,12 +118,12 @@ export const SeedModal = memo(function SeedModal() {
               </label>
               <select
                 value={audience}
-                onChange={(e) => setAudience(e.target.value)}
+                onChange={(event) => setAudience(event.target.value)}
                 className="w-full bg-zinc-900 border border-zinc-700 focus:border-emerald-500 text-emerald-400 font-mono text-sm p-2.5 rounded outline-none transition-colors duration-200 cursor-pointer"
               >
                 <option value="" className="text-zinc-600 bg-zinc-900">Select target demographic...</option>
-                {TARGET_AUDIENCES.map((a) => (
-                  <option key={a} value={a} className="bg-zinc-900 text-emerald-400">{a}</option>
+                {TARGET_AUDIENCES.map((value) => (
+                  <option key={value} value={value} className="bg-zinc-900 text-emerald-400">{value}</option>
                 ))}
               </select>
             </div>
@@ -141,7 +134,7 @@ export const SeedModal = memo(function SeedModal() {
               </label>
               <textarea
                 value={context}
-                onChange={(e) => setContext(e.target.value)}
+                onChange={(event) => setContext(event.target.value)}
                 placeholder={`> Enter market scenario, product concept, or crisis event...\n> e.g., "Global bandwidth shortage triggers local mesh network adoption..."`}
                 rows={4}
                 className="w-full bg-zinc-900 border border-zinc-700 focus:border-emerald-500 text-zinc-300 placeholder:text-zinc-700 font-mono text-xs p-3 rounded outline-none resize-none transition-colors duration-200 leading-relaxed"

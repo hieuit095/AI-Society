@@ -1,9 +1,6 @@
 /**
  * @file useWorldStore.ts
  * @description Central Zustand store for the God-Mode dashboard.
- * @ai_context Phase 4: Server-authoritative state. Chat messages arrive via `chatMessage` WS events.
- *             Messages are stored per-channel in `messagesByChannel` for isolated channel rendering.
- *             Graph data arrives via `graphSnapshot` WS events. Inspector data via `agentDetail`.
  */
 import { create } from 'zustand';
 import { Agent, AnalyticsPoint, Channel, Citizen, GraphData, Message, WorldView } from '../types';
@@ -26,6 +23,7 @@ export interface InspectorDetail {
   roleColor: string;
   avatarInitials: string;
   status: string;
+  lastTick: number;
   model: string;
   tier: string;
   tokensPerTick: number;
@@ -34,14 +32,11 @@ export interface InspectorDetail {
 }
 
 export interface WorldState {
-  // ── Server-authoritative fields (hydrated via WS) ──
   isPlaying: boolean;
   currentTick: number;
   awakeAgents: number;
   totalAgents: number;
   rustRam: number;
-
-  // ── Client-side state ──
   messagesByChannel: Record<string, Message[]>;
   selectedAgent: Agent | null;
   activeChannel: string;
@@ -54,8 +49,6 @@ export interface WorldState {
   channels: Channel[];
   isBootstrapped: boolean;
   connectionStatus: 'stable' | 'degraded' | 'resyncing';
-
-  // ── Actions ──
   togglePlay: () => void;
   hydrateFromServer: (data: ServerHydration) => void;
   hydrateGraph: (data: GraphData) => void;
@@ -75,18 +68,58 @@ export interface WorldState {
   setConnectionStatus: (status: 'stable' | 'degraded' | 'resyncing') => void;
 }
 
-/** Maximum messages retained per channel for memory safety. */
 const MAX_MESSAGES_PER_CHANNEL = 200;
 
+function normalizeCitizenStatus(status: string): Citizen['status'] {
+  return status === 'Awake' || status === 'awake' ? 'Awake' : 'Sleeping';
+}
+
+function normalizeAgentStatus(status: string): Agent['status'] {
+  switch (status) {
+    case 'awake':
+    case 'active':
+      return 'awake';
+    case 'processing':
+      return 'processing';
+    case 'suspended':
+      return 'suspended';
+    case 'failed':
+      return 'failed';
+    default:
+      return 'idle';
+  }
+}
+
+function buildCitizensFromGraph(data: GraphData): Citizen[] {
+  const connectionsById = new Map<string, Set<string>>();
+
+  for (const node of data.nodes) {
+    connectionsById.set(node.id, new Set<string>());
+  }
+
+  for (const link of data.links) {
+    const source = String(link.source);
+    const target = String(link.target);
+    connectionsById.get(source)?.add(target);
+    connectionsById.get(target)?.add(source);
+  }
+
+  return data.nodes.map((node) => ({
+    id: node.id,
+    name: node.name,
+    role: node.group,
+    status: normalizeCitizenStatus(node.status),
+    memoryUsage: '—',
+    connections: Array.from(connectionsById.get(node.id) ?? []),
+  }));
+}
+
 export const useWorldStore = create<WorldState>((set) => ({
-  // Server-authoritative (initial values, overwritten by WorldBootstrap)
   isPlaying: false,
   currentTick: 0,
   awakeAgents: 0,
   totalAgents: 0,
   rustRam: 0,
-
-  // Client-side — empty until server hydrates via WebSocket
   messagesByChannel: {},
   selectedAgent: null,
   activeChannel: 'board-room',
@@ -109,10 +142,6 @@ export const useWorldStore = create<WorldState>((set) => ({
   isBootstrapped: false,
   connectionStatus: 'stable',
 
-
-  /**
-   * Send play/pause command to the Rust server.
-   */
   togglePlay: () => {
     const current = useWorldStore.getState().isPlaying;
     sendCommand('simulation.control', {
@@ -121,41 +150,30 @@ export const useWorldStore = create<WorldState>((set) => ({
     });
   },
 
-  /**
-   * Hydrate server-authoritative fields from WebSocket events.
-   * Called on `world.bootstrap` and `tick.sync` events.
-   */
   hydrateFromServer: (data: ServerHydration) =>
     set(() => ({ ...data, isBootstrapped: true })),
 
-  /**
-   * Hydrate graph data from `graph.snapshot` WS event.
-   */
   hydrateGraph: (data: GraphData) =>
     set({
       graphData: data,
-      // Also update citizens from graph nodes
-      citizens: data.nodes.map((n) => ({
-        id: n.id,
-        name: n.name,
-        role: n.group,
-        status: n.status as 'Awake' | 'Sleeping',
-        memoryUsage: '—',
-        connections: [],
-      })),
+      citizens: buildCitizensFromGraph(data),
     }),
 
-  /**
-   * Hydrate inspector detail from `agent.detail` WS event.
-   */
   hydrateInspector: (detail: InspectorDetail) =>
-    set({ inspectorDetail: detail }),
+    set((state) => ({
+      inspectorDetail: detail,
+      selectedAgent: state.selectedAgent && state.selectedAgent.id === detail.agentId
+        ? {
+            ...state.selectedAgent,
+            name: detail.name,
+            role: detail.role,
+            roleColor: detail.roleColor as Agent['roleColor'],
+            avatarInitials: detail.avatarInitials,
+            status: normalizeAgentStatus(detail.status),
+          }
+        : state.selectedAgent,
+    })),
 
-  /**
-   * Handle `seedApplied` event from the Rust backend.
-   * Clears all channel messages, resets tick to 0, closes the seed modal,
-   * and appends the server-authored system directive to the board-room.
-   */
   handleSeedApplied: (systemMessage: Message) =>
     set({
       messagesByChannel: {
@@ -169,28 +187,36 @@ export const useWorldStore = create<WorldState>((set) => ({
       selectedAgent: null,
     }),
 
-  /**
-   * Append a server-computed analytics data point from `analytics.tick` WS event.
-   */
   appendAnalytics: (point: AnalyticsPoint) =>
     set((state) => ({
-      analyticsData: [...state.analyticsData.slice(-19), point],
+      analyticsData: [...state.analyticsData.slice(-59), point],
     })),
 
-  /**
-   * Apply batched agent status changes from `agent.status.batch` WS event.
-   * Single state mutation for all changes — avoids N re-renders.
-   */
   applyStatusBatch: (changes) =>
     set((state) => {
       if (changes.length === 0) return state;
-      const lookup = new Map(changes.map((c) => [c.agentId, c.status]));
+      const lookup = new Map(changes.map((change) => [change.agentId, change.status]));
+
       return {
-        citizens: state.citizens.map((cit) => {
-          const newStatus = lookup.get(cit.id);
-          if (!newStatus) return cit;
-          return { ...cit, status: newStatus === 'awake' ? 'Awake' : 'Sleeping' };
+        citizens: state.citizens.map((citizen) => {
+          const nextStatus = lookup.get(citizen.id);
+          if (!nextStatus) return citizen;
+          return { ...citizen, status: normalizeCitizenStatus(nextStatus) };
         }),
+        graphData: {
+          ...state.graphData,
+          nodes: state.graphData.nodes.map((node) => {
+            const nextStatus = lookup.get(node.id);
+            if (!nextStatus) return node;
+            return { ...node, status: normalizeCitizenStatus(nextStatus) };
+          }),
+        },
+        selectedAgent: state.selectedAgent && lookup.has(state.selectedAgent.id)
+          ? {
+              ...state.selectedAgent,
+              status: normalizeAgentStatus(lookup.get(state.selectedAgent.id) ?? state.selectedAgent.status),
+            }
+          : state.selectedAgent,
       };
     }),
 
@@ -203,10 +229,6 @@ export const useWorldStore = create<WorldState>((set) => ({
 
   clearSelectedAgent: () => set({ selectedAgent: null, inspectorDetail: null }),
 
-  /**
-   * Append a message to the correct per-channel array.
-   * Caps each channel at MAX_MESSAGES_PER_CHANNEL entries.
-   */
   addMessage: (message) =>
     set((state) => {
       const channelId = message.channelId || 'board-room';
@@ -219,18 +241,13 @@ export const useWorldStore = create<WorldState>((set) => ({
       };
     }),
 
-  /**
-   * Batch-append messages from a `chat.batch` frame.
-   * Groups by channel and merges in a single state update
-   * to prevent N individual React renders.
-   */
   addMessages: (messages) =>
     set((state) => {
       const updated = { ...state.messagesByChannel };
-      for (const msg of messages) {
-        const channelId = msg.channelId || 'board-room';
+      for (const message of messages) {
+        const channelId = message.channelId || 'board-room';
         const existing = updated[channelId] ?? [];
-        updated[channelId] = [...existing.slice(-(MAX_MESSAGES_PER_CHANNEL - 1)), msg];
+        updated[channelId] = [...existing.slice(-(MAX_MESSAGES_PER_CHANNEL - 1)), message];
       }
       return { messagesByChannel: updated };
     }),
@@ -244,12 +261,8 @@ export const useWorldStore = create<WorldState>((set) => ({
   closeSeedModal: () => set({ isSeedModalOpen: false }),
 
   injectSeed: (title) => {
-    // Close the modal immediately for responsive UX.
-    // All world-state mutations are FORBIDDEN here — they arrive
-    // exclusively via the server's `seed.applied` event, handled
-    // by `handleSeedApplied`.
     set({ isSeedModalOpen: false });
-    sendCommand('clientCommand', {
+    sendCommand('seed.inject', {
       type: 'injectSeed',
       title,
       audience: '',

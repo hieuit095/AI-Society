@@ -11,7 +11,13 @@ import { sendCommand } from '../../services/wsClient';
 import { cn } from '../../lib/utils';
 
 function formatTick(tick: number): string {
-  return tick.toString().padStart(7, '0').replace(/(\d{3})(\d{3})(\d+)/, '$1,$2');
+  const normalizedTick = Math.max(0, Math.trunc(tick));
+  if (normalizedTick >= 1_000_000) {
+    return normalizedTick.toLocaleString('en-US');
+  }
+
+  const paddedTick = normalizedTick.toString().padStart(6, '0');
+  return `${paddedTick.slice(0, 3)},${paddedTick.slice(3)}`;
 }
 
 export const TopBar = memo(function TopBar() {
@@ -48,11 +54,11 @@ export const TopBar = memo(function TopBar() {
   }, [showBulkPopover]);
 
   const handleSpawnSingle = () => {
-    sendCommand('clientCommand', { type: 'spawnSingle' });
+    sendCommand('genesis.spawn.single', { type: 'spawnSingle' });
   };
 
   const handleSpawnBulk = () => {
-    sendCommand('clientCommand', {
+    sendCommand('genesis.spawn.bulk', {
       type: 'spawnBulk',
       count: bulkCount,
       eliteRatio: eliteRatio / 100,

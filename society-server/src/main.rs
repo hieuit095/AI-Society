@@ -4,7 +4,7 @@
 //!
 //! ## Architecture (Phase 3)
 //!
-//! - **Agent Genesis**: On startup, spawns 150 agents with role profiles and provider routes.
+//! - **Agent Genesis**: On startup, spawns 1,000 agents with role profiles and provider routes.
 //! - **WorldState**: Owns tick counter, agent roster, and runtime telemetry.
 //! - **Tick Loop**: Advances time, drifts agent status, and broadcasts `TickSync` events.
 //! - **WebSocket**: Bootstrap on connect, tick sync via broadcast, simulation control commands.
@@ -51,9 +51,15 @@ async fn main() {
 
     // ── Broadcast channel ──
     let (event_tx, _) = broadcast::channel::<String>(1024);
+    let sequence = world::new_sequence_counter(0);
 
     // ── Tick loop ──
-    world::spawn_tick_loop(world.clone(), event_tx.clone(), shared_memory.clone());
+    world::spawn_tick_loop(
+        world.clone(),
+        event_tx.clone(),
+        shared_memory.clone(),
+        sequence.clone(),
+    );
 
     // ── CORS ──
     let cors = CorsLayer::new()
@@ -66,6 +72,7 @@ async fn main() {
         world,
         event_tx,
         shared_memory,
+        sequence,
     };
 
     let app = Router::new()
@@ -103,10 +110,12 @@ mod tests {
         let memory_store =
             memory::MemoryStore::new_in_memory().expect("failed to initialize memory store");
         let shared_memory = Arc::new(Mutex::new(memory_store));
+        let sequence = world::new_sequence_counter(0);
         let app_state = AppState {
             world,
             event_tx,
             shared_memory,
+            sequence,
         };
 
         Router::new()

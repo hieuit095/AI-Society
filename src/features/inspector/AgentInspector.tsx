@@ -1,7 +1,6 @@
 /**
  * @file AgentInspector.tsx
  * @description Slides in detailed agent telemetry from the Rust `agent.detail` WebSocket event.
- * @ai_context Phase 6: All stats are server-authoritative via `inspectorDetail` in the Zustand store.
  */
 import { memo } from 'react';
 import { X, Cpu, Hash, Activity, Zap, Clock } from 'lucide-react';
@@ -28,14 +27,20 @@ const AVATAR_GLOW: Record<string, string> = {
 
 const STATUS_COLORS: Record<string, string> = {
   active: 'bg-emerald-400',
+  awake: 'bg-emerald-400',
   idle: 'bg-zinc-500',
   processing: 'bg-amber-400 animate-pulse',
+  suspended: 'bg-rose-400',
+  failed: 'bg-rose-500',
 };
 
 const STATUS_TEXT: Record<string, string> = {
   active: 'text-emerald-400',
+  awake: 'text-emerald-400',
   idle: 'text-zinc-500',
   processing: 'text-amber-400',
+  suspended: 'text-rose-400',
+  failed: 'text-rose-500',
 };
 
 function StatRow({ icon: Icon, label, value, valueClass }: { icon: React.ElementType; label: string; value: string; valueClass?: string }) {
@@ -61,6 +66,13 @@ export const AgentInspector = memo(function AgentInspector() {
       inspectorDetail: state.inspectorDetail,
     }))
   );
+
+  const displayName = inspectorDetail?.name ?? selectedAgent?.name ?? 'UNKNOWN';
+  const displayRole = inspectorDetail?.role ?? selectedAgent?.role ?? 'UNKNOWN';
+  const displayRoleColor = inspectorDetail?.roleColor ?? selectedAgent?.roleColor ?? 'emerald';
+  const displayAvatar = inspectorDetail?.avatarInitials ?? selectedAgent?.avatarInitials ?? '??';
+  const displayStatus = inspectorDetail?.status ?? selectedAgent?.status ?? 'idle';
+  const statusClass = STATUS_TEXT[displayStatus] ?? 'text-zinc-500';
 
   return (
     <div
@@ -88,23 +100,23 @@ export const AgentInspector = memo(function AgentInspector() {
             <div className="flex items-start gap-3">
               <div className={cn(
                 'w-14 h-14 rounded-xl border-2 flex items-center justify-center font-bold text-lg shadow-lg',
-                AVATAR_GLOW[selectedAgent.roleColor] ?? 'bg-zinc-800 border-zinc-700 text-zinc-200'
+                AVATAR_GLOW[displayRoleColor] ?? 'bg-zinc-800 border-zinc-700 text-zinc-200'
               )}>
-                {selectedAgent.avatarInitials}
+                {displayAvatar}
               </div>
 
               <div className="flex-1 min-w-0">
-                <h2 className="font-bold text-zinc-100 text-base leading-tight">{selectedAgent.name}</h2>
+                <h2 className="font-bold text-zinc-100 text-base leading-tight">{displayName}</h2>
                 <span className={cn(
                   'inline-block font-mono text-[11px] px-2 py-0.5 rounded border font-semibold uppercase tracking-wide mt-1',
-                  ROLE_COLOR_MAP[selectedAgent.roleColor] ?? 'text-zinc-400 bg-zinc-800 border-zinc-700'
+                  ROLE_COLOR_MAP[displayRoleColor] ?? 'text-zinc-400 bg-zinc-800 border-zinc-700'
                 )}>
-                  {selectedAgent.role}
+                  {displayRole}
                 </span>
                 <div className="flex items-center gap-1.5 mt-2">
-                  <span className={cn('w-1.5 h-1.5 rounded-full', STATUS_COLORS[selectedAgent.status])} />
-                  <span className={cn('text-[11px] font-mono uppercase', STATUS_TEXT[selectedAgent.status])}>
-                    {selectedAgent.status}
+                  <span className={cn('w-1.5 h-1.5 rounded-full', STATUS_COLORS[displayStatus] ?? 'bg-zinc-500')} />
+                  <span className={cn('text-[11px] font-mono uppercase', statusClass)}>
+                    {displayStatus}
                   </span>
                 </div>
               </div>
@@ -115,8 +127,8 @@ export const AgentInspector = memo(function AgentInspector() {
             <h3 className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest font-mono mb-2">System Stats</h3>
             <div className="space-y-0">
               <StatRow icon={Hash} label="Agent ID" value={selectedAgent.id.toUpperCase()} />
-              <StatRow icon={Clock} label="Last Tick" value={currentTick.toLocaleString()} valueClass="text-emerald-400" />
-              <StatRow icon={Activity} label="Status" value={selectedAgent.status.toUpperCase()} valueClass={STATUS_TEXT[selectedAgent.status]} />
+              <StatRow icon={Clock} label="Last Tick" value={(inspectorDetail?.lastTick ?? currentTick).toLocaleString()} valueClass="text-emerald-400" />
+              <StatRow icon={Activity} label="Status" value={displayStatus.toUpperCase()} valueClass={statusClass} />
               <StatRow icon={Zap} label="Model" value={inspectorDetail?.model ?? 'Awaiting Telemetry...'} valueClass={inspectorDetail?.model ? 'text-cyan-400' : 'text-zinc-600'} />
               <StatRow icon={Cpu} label="Tokens/tick" value={inspectorDetail?.tokensPerTick?.toLocaleString() ?? '0'} valueClass="text-amber-400" />
             </div>
@@ -125,19 +137,6 @@ export const AgentInspector = memo(function AgentInspector() {
           <div className="p-4">
             <h3 className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest font-mono mb-2">Live Thought Log</h3>
             <ThoughtLog />
-
-            <div className="mt-4 space-y-2">
-              <h3 className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest font-mono">Actions</h3>
-              <button className="w-full px-3 py-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded text-xs font-mono text-zinc-300 transition-all duration-150 text-left hover:text-zinc-100">
-                {'>'} Inspect Memory Store
-              </button>
-              <button className="w-full px-3 py-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded text-xs font-mono text-zinc-300 transition-all duration-150 text-left hover:text-zinc-100">
-                {'>'} View Decision Tree
-              </button>
-              <button className="w-full px-3 py-2 bg-rose-900/20 hover:bg-rose-900/30 border border-rose-900/50 rounded text-xs font-mono text-rose-400 transition-all duration-150 text-left hover:text-rose-300">
-                {'>'} Suspend Agent
-              </button>
-            </div>
           </div>
         </div>
       )}

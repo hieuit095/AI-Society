@@ -25,9 +25,10 @@ use society_core::{
     AgentStatus, Envelope, ServerEvent,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock};
 use std::time::Instant;
-use sysinfo::System;
+use sysinfo::{get_current_pid, ProcessRefreshKind, ProcessesToUpdate, System};
 use tokio::sync::{broadcast, Mutex, RwLock};
 use tokio::time::{interval, Duration};
 use tracing::{debug, info, warn};
@@ -40,6 +41,19 @@ const MAX_SPEAKERS_PER_TICK: usize = 5;
 
 /// How many ticks a mention remains valid in the reactive scheduler queue.
 const MENTION_TTL: u64 = 3;
+
+/// Reused mention extractor for cross-pollination and reactive scheduling.
+static MENTION_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"@(AGT-\d+)").expect("valid mention regex"));
+
+/// Reactive scheduler ticket for an agent who was directly mentioned.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MentionTicket {
+    pub agent_id: String,
+    pub mentioned_by: String,
+    pub expiry_tick: u64,
+}
 
 /// The authoritative simulation state.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -62,7 +76,7 @@ pub struct WorldState {
     /// Reactive scheduler queue — agents mentioned via `@AGT-XXX` are
     /// pushed here with an expiration tick so they are prioritised as
     /// speakers in upcoming ticks.
-    pub mention_queue: VecDeque<(String, u64)>,
+    pub mention_queue: VecDeque<MentionTicket>,
 
     // ── Analytics (Phase 6) ──────────────────────────────────────────
     /// Rolling analytics engine — accumulates token burns, sentiment, and adoption.
@@ -77,7 +91,7 @@ impl WorldState {
             is_playing: false,
             current_tick: 0,
             total_agents: total,
-            rust_ram: 45,
+            rust_ram: 0,
             seed_id: format!(
                 "seed-genesis-{}",
                 std::time::SystemTime::now()
@@ -99,7 +113,7 @@ impl WorldState {
         // Pause and reset
         self.is_playing = false;
         self.current_tick = 0;
-        self.rust_ram = 45;
+        self.rust_ram = 0;
 
         // Generate new seed_id
         self.seed_id = format!(
@@ -255,7 +269,7 @@ impl Default for WorldState {
             is_playing: false,
             current_tick: 0,
             total_agents: 0,
-            rust_ram: 45,
+            rust_ram: 0,
             seed_id: "seed-default".to_string(),
             agents: Vec::new(),
             channel_history: HashMap::new(),
@@ -273,6 +287,21 @@ pub type EventTx = broadcast::Sender<String>;
 
 /// Thread-safe handle for the memory store (rusqlite Connection is !Send).
 pub type SharedMemory = Arc<Mutex<MemoryStore>>;
+
+/// Shared broadcast sequence counter used by the tick loop and command handlers.
+pub type SharedSequence = Arc<AtomicU64>;
+
+pub fn new_sequence_counter(start: u64) -> SharedSequence {
+    Arc::new(AtomicU64::new(start))
+}
+
+pub fn current_sequence(sequence: &SharedSequence) -> u64 {
+    sequence.load(Ordering::Relaxed)
+}
+
+pub fn next_sequence(sequence: &SharedSequence) -> u64 {
+    sequence.fetch_add(1, Ordering::Relaxed) + 1
+}
 
 /// Lightweight snapshot extracted under the write lock for use after releasing it.
 #[allow(dead_code)]
@@ -301,11 +330,22 @@ struct SpeakerSlot {
     agent_role_color: String,
     agent_avatar_initials: String,
     channel_id: String,
+    recent_channel_messages: usize,
+    active_roster_count: usize,
     /// If this speaker was selected because of an @-mention, this holds
     /// the mentioner's AgentId (e.g., "AGT-042") for JIT memory recall.
     mentioned_by: Option<String>,
+    relationship_recall_count: usize,
     /// Fully-owned LLM inference context.
     llm_ctx: SpeakerContext,
+}
+
+struct AgentTurnTelemetry {
+    agent_id: String,
+    model: String,
+    last_tick: u64,
+    total_tokens: u32,
+    thought_log: Vec<String>,
 }
 
 /// Format a channel's message ring buffer into a newline-separated transcript.
@@ -378,7 +418,12 @@ fn build_speaker_slot(
         agent_role_color: agent.profile.role.color_key().to_string(),
         agent_avatar_initials: agent.name[..2].to_uppercase(),
         channel_id: channel.to_string(),
+        recent_channel_messages: channel_transcript.map(|t| t.lines().count()).unwrap_or(0),
+        active_roster_count: active_roster
+            .map(|roster| roster.matches('@').count())
+            .unwrap_or(0),
         mentioned_by: None,
+        relationship_recall_count: 0,
         llm_ctx: SpeakerContext {
             agent_name: agent.name.clone(),
             agent_role: role_name.to_string(),
@@ -400,16 +445,30 @@ fn build_speaker_slot(
 ///    history ring buffers → drop lock.
 /// 4. **Broadcast & Persist (lock-free):** Serialize and broadcast events, offload
 ///    SQLite writes to a blocking thread.
-pub fn spawn_tick_loop(world: SharedWorld, tx: EventTx, memory: SharedMemory) {
+pub fn spawn_tick_loop(
+    world: SharedWorld,
+    tx: EventTx,
+    memory: SharedMemory,
+    sequence: SharedSequence,
+) {
     tokio::spawn(async move {
         let mut tick_interval = interval(Duration::from_millis(1500));
-        let mut sequence: u64 = 0;
         let mut drift_seed: u64 = 42;
-        let mut sys = System::new_all();
+        let mut sys = System::new();
+        let current_pid = get_current_pid().ok();
 
         loop {
             tick_interval.tick().await;
             let tick_start = Instant::now();
+            let used_ram_mb = current_pid.and_then(|pid| {
+                sys.refresh_processes_specifics(
+                    ProcessesToUpdate::Some(&[pid]),
+                    false,
+                    ProcessRefreshKind::nothing().with_memory(),
+                );
+                sys.process(pid)
+                    .map(|process| (process.memory() / 1024 / 1024) as u32)
+            });
 
             // ════════════════════════════════════════════════════════════
             // LOCK SCOPE 1: Acquire write lock, mutate state, extract
@@ -418,10 +477,9 @@ pub fn spawn_tick_loop(world: SharedWorld, tx: EventTx, memory: SharedMemory) {
             let snapshot = {
                 let mut state = world.write().await;
 
-                // Dynamically track actual server RAM usage
-                sys.refresh_memory();
-                let used_ram_mb = (sys.used_memory() / 1024 / 1024) as u32;
-                state.rust_ram = used_ram_mb;
+                if let Some(used_ram_mb) = used_ram_mb {
+                    state.rust_ram = used_ram_mb;
+                }
 
                 if !state.is_playing {
                     continue;
@@ -495,24 +553,24 @@ pub fn spawn_tick_loop(world: SharedWorld, tx: EventTx, memory: SharedMemory) {
                     }
 
                     // ── Step 1: Drain mention_queue for priority speakers ──
-                    let mut remaining_queue: VecDeque<(String, u64)> = VecDeque::new();
-                    while let Some((mentioned_id, expiry)) = state.mention_queue.pop_front() {
+                    let mut remaining_queue: VecDeque<MentionTicket> = VecDeque::new();
+                    while let Some(ticket) = state.mention_queue.pop_front() {
                         // Discard expired entries
-                        if expiry < tick {
+                        if ticket.expiry_tick < tick {
                             continue;
                         }
                         // Cap at MAX_SPEAKERS_PER_TICK
                         if speaker_contexts.len() >= MAX_SPEAKERS_PER_TICK {
-                            remaining_queue.push_back((mentioned_id, expiry));
+                            remaining_queue.push_back(ticket);
                             continue;
                         }
                         // Skip if already selected
-                        if selected_ids.contains(&mentioned_id) {
+                        if selected_ids.contains(&ticket.agent_id) {
                             continue;
                         }
                         // Find the agent in the roster
                         if let Some(agent) =
-                            state.agents.iter().find(|a| a.id.as_str() == mentioned_id)
+                            state.agents.iter().find(|a| a.id.as_str() == ticket.agent_id)
                         {
                             if agent.status.is_awake() {
                                 let ch = channel_for_role(agent.profile.role.display_name());
@@ -530,14 +588,14 @@ pub fn spawn_tick_loop(world: SharedWorld, tx: EventTx, memory: SharedMemory) {
                                     &mut drift_seed,
                                 ) {
                                     // Tag this slot as mention-triggered for JIT recall
-                                    slot.mentioned_by = Some(mentioned_id.clone());
-                                    selected_ids.insert(mentioned_id);
+                                    slot.mentioned_by = Some(ticket.mentioned_by.clone());
+                                    selected_ids.insert(ticket.agent_id);
                                     speaker_contexts.push(slot);
                                     slot_counter += 1;
                                 }
                             } else {
                                 // Agent not awake — re-queue for the next tick
-                                remaining_queue.push_back((mentioned_id, expiry));
+                                remaining_queue.push_back(ticket);
                             }
                         }
                     }
@@ -584,17 +642,9 @@ pub fn spawn_tick_loop(world: SharedWorld, tx: EventTx, memory: SharedMemory) {
                     }
                 }
 
-                // RAM drift (small mutation, stay inside lock)
-                drift_seed = drift_seed.wrapping_mul(6364136223846793005).wrapping_add(1);
-                let ram_drift = ((drift_seed >> 33) as i32) % 3;
-                state.rust_ram = state
-                    .rust_ram
-                    .saturating_add_signed(ram_drift)
-                    .clamp(30, 120);
-
                 let awake_count = state.awake_count();
                 let tick_sync_event = state.to_tick_sync();
-                let graph_snapshot = if tick % 5 == 0 {
+                let graph_snapshot = if tick == 1 || tick % 5 == 0 {
                     Some(state.to_graph_snapshot())
                 } else {
                     None
@@ -622,9 +672,8 @@ pub fn spawn_tick_loop(world: SharedWorld, tx: EventTx, memory: SharedMemory) {
 
             // ── Broadcast batched status changes ──
             if !snapshot.status_changes.is_empty() {
-                sequence += 1;
                 let batch_envelope = Envelope::new(
-                    sequence,
+                    next_sequence(&sequence),
                     "agent.status.batch",
                     ServerEvent::AgentStatusBatch {
                         changes: snapshot.status_changes,
@@ -643,6 +692,7 @@ pub fn spawn_tick_loop(world: SharedWorld, tx: EventTx, memory: SharedMemory) {
             // ════════════════════════════════════════════════════════════
             let mut speaker_contexts = snapshot.speaker_contexts;
             let seed_id_for_recall = snapshot.seed_id.clone();
+            let recall_started = Instant::now();
 
             // Collect indices of mention-triggered speakers
             let mention_indices: Vec<(usize, String)> = speaker_contexts
@@ -680,6 +730,7 @@ pub fn spawn_tick_loop(world: SharedWorld, tx: EventTx, memory: SharedMemory) {
                 {
                     if let Ok(entries) = recall_result {
                         if !entries.is_empty() {
+                            speaker_contexts[idx].relationship_recall_count = entries.len();
                             let context_text: String = entries
                                 .iter()
                                 .map(|e| e.content.clone())
@@ -703,12 +754,14 @@ pub fn spawn_tick_loop(world: SharedWorld, tx: EventTx, memory: SharedMemory) {
                     }
                 }
             }
+            let recall_latency_ms = recall_started.elapsed().as_millis() as u64;
 
             // ════════════════════════════════════════════════════════════
             // ASYNC LLM INFERENCE (lock-free, concurrent)
             // Each speaker's inference runs as a separate future.
             // ════════════════════════════════════════════════════════════
             let mut chat_messages: Vec<ChatMsg> = Vec::new();
+            let mut telemetry_updates: Vec<AgentTurnTelemetry> = Vec::new();
 
             if !speaker_contexts.is_empty() {
                 // Build inference futures
@@ -724,7 +777,29 @@ pub fn spawn_tick_loop(world: SharedWorld, tx: EventTx, memory: SharedMemory) {
                 let results = futures_util::future::join_all(inference_futures).await;
 
                 // Assemble ChatMsg from results + slot metadata
-                for (slot, content) in speaker_contexts.iter().zip(results.into_iter()) {
+                for (slot, inference) in speaker_contexts.iter().zip(results.into_iter()) {
+                    let mut thought_log = vec![format!(
+                        "> Tick {}: turn committed in #{} with {} recent channel messages and {} visible peers.",
+                        tick,
+                        slot.channel_id,
+                        slot.recent_channel_messages,
+                        slot.active_roster_count
+                    )];
+                    if let Some(peer) = slot.mentioned_by.as_ref() {
+                        thought_log.push(format!(
+                            "> Mention-triggered by @{}; recalled {} relationship memories.",
+                            peer, slot.relationship_recall_count
+                        ));
+                    }
+                    thought_log.push(format!(
+                        "> Provider route resolved to {}.",
+                        inference.model
+                    ));
+                    thought_log.push(format!(
+                        "> Turn completed with {} billed tokens.",
+                        inference.total_tokens
+                    ));
+
                     chat_messages.push(ChatMsg {
                         id: format!("msg-{}-{}", tick, slot.slot_index),
                         agent_id: slot.agent_id.clone(),
@@ -733,10 +808,18 @@ pub fn spawn_tick_loop(world: SharedWorld, tx: EventTx, memory: SharedMemory) {
                         agent_role_color: slot.agent_role_color.clone(),
                         agent_avatar_initials: slot.agent_avatar_initials.clone(),
                         channel_id: slot.channel_id.clone(),
-                        content,
+                        content: inference.content.clone(),
                         timestamp: chrono::Utc::now().to_rfc3339(),
                         tick,
                         is_system_message: false,
+                    });
+
+                    telemetry_updates.push(AgentTurnTelemetry {
+                        agent_id: slot.agent_id.clone(),
+                        model: inference.model,
+                        last_tick: tick,
+                        total_tokens: inference.total_tokens,
+                        thought_log,
                     });
                 }
             }
@@ -747,8 +830,6 @@ pub fn spawn_tick_loop(world: SharedWorld, tx: EventTx, memory: SharedMemory) {
             let seed_for_mem = snapshot.seed_id.clone();
             let mut history_inserts: Vec<(String, ChatMsg)> = Vec::new();
             let mut batch_msgs: Vec<ChatMsg> = Vec::with_capacity(chat_messages.len());
-            let cross_poll_re = Regex::new(r"@(AGT-\d+)").expect("valid mention regex");
-
             for msg in chat_messages {
                 let sender_content = format!("[Tick {}] {}: {}", tick, msg.agent_role, msg.content);
 
@@ -764,7 +845,7 @@ pub fn spawn_tick_loop(world: SharedWorld, tx: EventTx, memory: SharedMemory) {
                     "[Tick {}] @{} ({}) directed at me: {}",
                     tick, msg.agent_id, msg.agent_role, msg.content
                 );
-                for cap in cross_poll_re.captures_iter(&msg.content) {
+                for cap in MENTION_REGEX.captures_iter(&msg.content) {
                     let mentioned_id = cap[1].to_string();
                     if mentioned_id != msg.agent_id {
                         mem_entries.push((
@@ -781,9 +862,8 @@ pub fn spawn_tick_loop(world: SharedWorld, tx: EventTx, memory: SharedMemory) {
 
             // ── Emit all chat messages as a single coalesced frame ──
             if !batch_msgs.is_empty() {
-                sequence += 1;
                 let envelope = Envelope::new(
-                    sequence,
+                    next_sequence(&sequence),
                     "chat.batch",
                     ServerEvent::ChatBatch {
                         messages: batch_msgs,
@@ -800,21 +880,42 @@ pub fn spawn_tick_loop(world: SharedWorld, tx: EventTx, memory: SharedMemory) {
             // the reactive scheduler queue.
             // ════════════════════════════════════════════════════════════
             {
-                let mention_re = Regex::new(r"@(AGT-\d+)").expect("valid mention regex");
-                let mut extracted_mentions: Vec<String> = Vec::new();
+                let mut extracted_mentions: Vec<MentionTicket> = Vec::new();
 
                 // Scan all generated messages for @AGT-XXX mentions
                 for msg in &history_inserts {
-                    for cap in mention_re.captures_iter(&msg.1.content) {
+                    for cap in MENTION_REGEX.captures_iter(&msg.1.content) {
                         let mentioned = cap[1].to_string();
                         // Don't let an agent mention itself
                         if mentioned != msg.1.agent_id {
-                            extracted_mentions.push(mentioned);
+                            extracted_mentions.push(MentionTicket {
+                                agent_id: mentioned,
+                                mentioned_by: msg.1.agent_id.clone(),
+                                expiry_tick: tick + MENTION_TTL,
+                            });
                         }
                     }
                 }
 
                 let mut state = world.write().await;
+
+                for update in telemetry_updates {
+                    if let Some(agent) = state
+                        .agents
+                        .iter_mut()
+                        .find(|agent| agent.id.as_str() == update.agent_id)
+                    {
+                        agent.last_tick = update.last_tick;
+                        agent.last_token_burn = update.total_tokens;
+                        agent.provider.model = update.model;
+                        for line in update.thought_log {
+                            if agent.thought_log.len() >= 20 {
+                                agent.thought_log.pop_front();
+                            }
+                            agent.thought_log.push_back(line);
+                        }
+                    }
+                }
 
                 // Push channel history entries
                 for (channel_id, msg) in history_inserts {
@@ -830,20 +931,23 @@ pub fn spawn_tick_loop(world: SharedWorld, tx: EventTx, memory: SharedMemory) {
 
                 // Push extracted mentions into the reactive scheduler queue
                 if !extracted_mentions.is_empty() {
-                    let expiry = tick + MENTION_TTL;
-                    for mentioned_id in extracted_mentions {
-                        // Avoid duplicate entries for the same agent
+                    for ticket in extracted_mentions {
+                        // Avoid duplicate entries for the same agent/mentioner pair.
                         if !state
                             .mention_queue
                             .iter()
-                            .any(|(id, _)| id == &mentioned_id)
+                            .any(|existing| {
+                                existing.agent_id == ticket.agent_id
+                                    && existing.mentioned_by == ticket.mentioned_by
+                            })
                         {
                             debug!(
-                                agent = %mentioned_id,
-                                expiry_tick = expiry,
+                                agent = %ticket.agent_id,
+                                mentioned_by = %ticket.mentioned_by,
+                                expiry_tick = ticket.expiry_tick,
                                 "@mention detected, queuing for priority scheduling"
                             );
-                            state.mention_queue.push_back((mentioned_id, expiry));
+                            state.mention_queue.push_back(ticket);
                         }
                     }
                 }
@@ -874,23 +978,18 @@ pub fn spawn_tick_loop(world: SharedWorld, tx: EventTx, memory: SharedMemory) {
             let ws_depth = tx.receiver_count();
             let analytics_point = {
                 let mut state = world.write().await;
-                let ap = state.analytics.compute_tick(
+                state.analytics.compute_tick(
                     tick,
                     snapshot.awake_count,
+                    snapshot.total_agents,
                     speakers_this_tick,
                     tick_latency,
-                    0, // recall_latency_ms: populated when FTS5 queries run
+                    recall_latency_ms,
                     ws_depth,
-                );
-                // Reset analytics if the seed just changed
-                if tick == 1 {
-                    state.analytics.reset();
-                }
-                ap
+                )
             };
-            sequence += 1;
             let analytics_envelope = Envelope::new(
-                sequence,
+                next_sequence(&sequence),
                 "analytics.tick",
                 ServerEvent::AnalyticsTick {
                     tick: analytics_point.tick,
@@ -909,8 +1008,11 @@ pub fn spawn_tick_loop(world: SharedWorld, tx: EventTx, memory: SharedMemory) {
             }
 
             // ── Broadcast tick.sync ──
-            sequence += 1;
-            let envelope = Envelope::new(sequence, "tick.sync", snapshot.tick_sync_event);
+            let envelope = Envelope::new(
+                next_sequence(&sequence),
+                "tick.sync",
+                snapshot.tick_sync_event,
+            );
             if let Ok(json) = serde_json::to_string(&envelope) {
                 let _ = tx.send(json);
                 debug!(tick, "Tick broadcast");
@@ -918,9 +1020,8 @@ pub fn spawn_tick_loop(world: SharedWorld, tx: EventTx, memory: SharedMemory) {
 
             // ── Broadcast graph snapshot (every 5th tick) ──
             if let Some(graph_data) = snapshot.graph_snapshot {
-                sequence += 1;
                 let graph_envelope = Envelope::new(
-                    sequence,
+                    next_sequence(&sequence),
                     "graph.snapshot",
                     ServerEvent::GraphSnapshot { data: graph_data },
                 );
@@ -1026,8 +1127,9 @@ mod tests {
         }));
         let (tx, mut rx) = broadcast::channel(256);
         let mem = Arc::new(Mutex::new(MemoryStore::new_in_memory().unwrap()));
+        let sequence = new_sequence_counter(0);
 
-        spawn_tick_loop(world.clone(), tx, mem);
+        spawn_tick_loop(world.clone(), tx, mem, sequence);
 
         // Collect tick.sync events (skip chat.message events)
         let mut ticks = Vec::new();
@@ -1056,8 +1158,9 @@ mod tests {
         let world = Arc::new(RwLock::new(WorldState::with_agents(agents)));
         let (tx, mut rx) = broadcast::channel(64);
         let mem = Arc::new(Mutex::new(MemoryStore::new_in_memory().unwrap()));
+        let sequence = new_sequence_counter(0);
 
-        spawn_tick_loop(world.clone(), tx, mem);
+        spawn_tick_loop(world.clone(), tx, mem, sequence);
 
         let result = tokio::time::timeout(Duration::from_secs(2), rx.recv()).await;
         assert!(result.is_err());
@@ -1082,7 +1185,7 @@ mod tests {
 
         assert_eq!(state.current_tick, 0);
         assert!(!state.is_playing);
-        assert_eq!(state.rust_ram, 45);
+        assert_eq!(state.rust_ram, 0);
         assert!(seed_id.starts_with("seed-"));
         assert_eq!(state.seed_id, seed_id);
 

@@ -1,12 +1,11 @@
 /**
  * @file world.ts
- * @description Shared frontend type contracts for the mocked ZeroClaw AI Society dashboard.
- * @ai_context These interfaces mirror the current client-side world state and act as the stable bridge
- * between today's Zustand prototype and the future Rust websocket payloads.
+ * @description Shared frontend type contracts for the ZeroClaw AI Society dashboard.
+ * @ai_context These interfaces mirror the Rust websocket payloads and the projected UI state.
  */
 export type AgentRoleColor = 'emerald' | 'amber' | 'cyan' | 'rose' | 'sky';
 
-export type AgentStatus = 'active' | 'idle' | 'processing';
+export type AgentStatus = 'active' | 'awake' | 'idle' | 'processing' | 'suspended' | 'failed';
 
 export type CitizenStatus = 'Awake' | 'Sleeping';
 

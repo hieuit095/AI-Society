@@ -9,11 +9,15 @@ import { GraphData, GraphNode } from '../../types';
 
 const ROLE_COLORS: Record<string, string> = {
   CEO: '#fbbf24',
+  'CEO Agent': '#fbbf24',
   CTO: '#fbbf24',
+  'CTO Agent': '#fbbf24',
+  'CFO Agent': '#f59e0b',
   Engineer: '#06b6d4',
   Analyst: '#06b6d4',
   Consumer: '#10b981',
   Researcher: '#10b981',
+  'Legal Agent': '#f43f5e',
 };
 
 const LINK_COLOR = 'rgba(16, 185, 129, 0.18)';

@@ -213,6 +213,8 @@ pub struct AgentRuntime {
     pub memory_handle: Option<String>,
     /// Bounded ring buffer of recent reasoning steps / tool calls (max 20).
     pub thought_log: VecDeque<String>,
+    /// Last tick where the agent completed a turn.
+    pub last_tick: u64,
     /// Tokens consumed in the agent's last LLM turn.
     pub last_token_burn: u32,
 }
@@ -233,6 +235,7 @@ impl AgentRuntime {
             prompt,
             memory_handle: None,
             thought_log: VecDeque::with_capacity(20),
+            last_tick: 0,
             last_token_burn: 0,
         }
     }

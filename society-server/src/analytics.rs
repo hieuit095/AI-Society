@@ -73,6 +73,7 @@ impl AnalyticsEngine {
         &mut self,
         tick: u64,
         awake_agents: u32,
+        total_agents: u32,
         speakers_this_tick: u32,
         tick_latency_ms: u64,
         recall_latency_ms: u64,
@@ -123,8 +124,8 @@ impl AnalyticsEngine {
             .wrapping_mul(6364136223846793005)
             .wrapping_add(7);
         let adoption_delta = ((self.drift_seed >> 33) % 3) as u32;
-        let awake_pct = if awake_agents > 0 {
-            (awake_agents * 100) / 150
+        let awake_pct = if awake_agents > 0 && total_agents > 0 {
+            (awake_agents * 100) / total_agents
         } else {
             0
         };
@@ -168,19 +169,19 @@ mod tests {
     #[test]
     fn compute_tick_accumulates_tokens() {
         let mut engine = AnalyticsEngine::new();
-        let p1 = engine.compute_tick(1, 100, 3, 0, 0, 0);
+        let p1 = engine.compute_tick(1, 100, 150, 3, 0, 0, 0);
         assert!(p1.tokens > 0);
         let tokens_after_1 = p1.tokens;
 
-        let p2 = engine.compute_tick(2, 100, 4, 0, 0, 0);
+        let p2 = engine.compute_tick(2, 100, 150, 4, 0, 0, 0);
         assert!(p2.tokens > tokens_after_1);
     }
 
     #[test]
     fn reset_clears_all_counters() {
         let mut engine = AnalyticsEngine::new();
-        engine.compute_tick(1, 100, 5, 0, 0, 0);
-        engine.compute_tick(2, 100, 4, 0, 0, 0);
+        engine.compute_tick(1, 100, 150, 5, 0, 0, 0);
+        engine.compute_tick(2, 100, 150, 4, 0, 0, 0);
         assert!(engine.cumulative_tokens > 0);
 
         engine.reset();
@@ -194,7 +195,7 @@ mod tests {
         let mut engine = AnalyticsEngine::new();
         let initial = engine.positive_sentiment;
         for t in 1..=20 {
-            engine.compute_tick(t, 140, 5, 0, 0, 0);
+            engine.compute_tick(t, 140, 150, 5, 0, 0, 0);
         }
         assert!(engine.positive_sentiment > initial);
     }
@@ -203,7 +204,7 @@ mod tests {
     fn adoption_rate_bounded_at_100() {
         let mut engine = AnalyticsEngine::new();
         for t in 1..=500 {
-            engine.compute_tick(t, 150, 5, 0, 0, 0);
+            engine.compute_tick(t, 150, 150, 5, 0, 0, 0);
         }
         assert!(engine.adoption_rate <= 100);
     }

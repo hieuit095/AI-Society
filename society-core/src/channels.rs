@@ -81,6 +81,7 @@ pub struct AgentDetailPayload {
     pub role_color: String,
     pub avatar_initials: String,
     pub status: String,
+    pub last_tick: u64,
     pub model: String,
     pub tier: String,
     pub tokens_per_tick: u32,

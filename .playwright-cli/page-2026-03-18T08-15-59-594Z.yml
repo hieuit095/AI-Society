@@ -1,0 +1,310 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - button "PAUSE" [ref=e205] [cursor=pointer]:
+          - img [ref=e206]
+          - generic [ref=e10]: PAUSE
+        - button "2x" [ref=e11] [cursor=pointer]:
+          - img [ref=e12]
+          - generic [ref=e15]: 2x
+      - generic [ref=e16]:
+        - generic [ref=e17]: Tick
+        - generic [ref=e18]: 000,004
+      - generic [ref=e212]: LIVE
+    - generic [ref=e19]:
+      - generic [ref=e24]:
+        - img [ref=e25]
+        - generic [ref=e27]: "989"
+        - generic [ref=e28]: /
+        - generic [ref=e29]: 1,000
+        - generic [ref=e30]: Awake
+      - generic [ref=e31]:
+        - img [ref=e32]
+        - generic [ref=e35]: 26MB
+        - generic [ref=e36]: Rust RAM
+      - generic [ref=e37]:
+        - button "DROP" [ref=e38] [cursor=pointer]:
+          - img [ref=e39]
+          - generic [ref=e42]: DROP
+        - button "BULK" [ref=e44] [cursor=pointer]:
+          - img [ref=e45]
+          - generic [ref=e50]: BULK
+      - button "INJECT SEED" [ref=e51] [cursor=pointer]:
+        - img [ref=e52]
+        - text: INJECT SEED
+  - generic [ref=e54]:
+    - complementary [ref=e55]:
+      - generic [ref=e56]:
+        - img [ref=e58]
+        - generic [ref=e60]: ZEROCLAW
+      - navigation [ref=e61]:
+        - button "World Map" [ref=e62] [cursor=pointer]:
+          - img [ref=e63]
+          - generic [ref=e66]: World Map
+        - button "Society Hub" [ref=e67] [cursor=pointer]:
+          - img [ref=e68]
+          - generic [ref=e70]: Society Hub
+        - button "Citizens" [active] [ref=e72] [cursor=pointer]:
+          - img [ref=e73]
+          - generic [ref=e78]: Citizens
+        - button "Analytics" [ref=e79] [cursor=pointer]:
+          - img [ref=e80]
+          - generic [ref=e81]: Analytics
+        - button "Settings" [ref=e82] [cursor=pointer]:
+          - img [ref=e83]
+          - generic [ref=e86]: Settings
+      - generic [ref=e88]:
+        - generic [ref=e90]: G
+        - generic [ref=e91]: GOD_OPERATOR
+    - main [ref=e92]:
+      - generic [ref=e502]:
+        - generic [ref=e503]:
+          - generic [ref=e504]:
+            - img
+            - textbox "> Search Citizen ID or Name..." [ref=e505]
+          - combobox [ref=e506] [cursor=pointer]:
+            - option "All Roles" [selected]
+            - option "Analyst"
+            - option "CEO Agent"
+            - option "CFO Agent"
+            - option "CTO Agent"
+            - option "Consumer"
+            - option "Engineer"
+            - option "Legal Agent"
+            - option "Researcher"
+          - generic [ref=e507]: 1000 / 1000 agents
+        - table [ref=e509]:
+          - rowgroup [ref=e510]:
+            - row "ID NAME ROLE STATUS RAM USAGE ACTIONS" [ref=e511]:
+              - columnheader "ID" [ref=e512]
+              - columnheader "NAME" [ref=e513]
+              - columnheader "ROLE" [ref=e514]
+              - columnheader "STATUS" [ref=e515]
+              - columnheader "RAM USAGE" [ref=e516]
+              - columnheader "ACTIONS" [ref=e517]
+          - rowgroup [ref=e518]:
+            - row [ref=e519]:
+              - cell [ref=e520]
+            - row "AGT-001 CIPHER-11 CEO Agent Awake — Inspect" [ref=e521] [cursor=pointer]:
+              - cell "AGT-001" [ref=e522]
+              - cell "CIPHER-11" [ref=e523]
+              - cell "CEO Agent" [ref=e524]:
+                - generic [ref=e525]: CEO Agent
+              - cell "Awake" [ref=e526]:
+                - generic [ref=e529]: Awake
+              - cell "—" [ref=e530]
+              - cell "Inspect" [ref=e531]:
+                - button "Inspect" [ref=e532]
+            - row "AGT-002 AXIOM-18 CEO Agent Awake — Inspect" [ref=e533] [cursor=pointer]:
+              - cell "AGT-002" [ref=e534]
+              - cell "AXIOM-18" [ref=e535]
+              - cell "CEO Agent" [ref=e536]:
+                - generic [ref=e537]: CEO Agent
+              - cell "Awake" [ref=e538]:
+                - generic [ref=e541]: Awake
+              - cell "—" [ref=e542]
+              - cell "Inspect" [ref=e543]:
+                - button "Inspect" [ref=e544]
+            - row "AGT-003 VEX-25 CEO Agent Awake — Inspect" [ref=e545] [cursor=pointer]:
+              - cell "AGT-003" [ref=e546]
+              - cell "VEX-25" [ref=e547]
+              - cell "CEO Agent" [ref=e548]:
+                - generic [ref=e549]: CEO Agent
+              - cell "Awake" [ref=e550]:
+                - generic [ref=e553]: Awake
+              - cell "—" [ref=e554]
+              - cell "Inspect" [ref=e555]:
+                - button "Inspect" [ref=e556]
+            - row "AGT-004 PULSE-32 CEO Agent Awake — Inspect" [ref=e557] [cursor=pointer]:
+              - cell "AGT-004" [ref=e558]
+              - cell "PULSE-32" [ref=e559]
+              - cell "CEO Agent" [ref=e560]:
+                - generic [ref=e561]: CEO Agent
+              - cell "Awake" [ref=e562]:
+                - generic [ref=e565]: Awake
+              - cell "—" [ref=e566]
+              - cell "Inspect" [ref=e567]:
+                - button "Inspect" [ref=e568]
+            - row "AGT-005 QUBIT-39 CEO Agent Awake — Inspect" [ref=e569] [cursor=pointer]:
+              - cell "AGT-005" [ref=e570]
+              - cell "QUBIT-39" [ref=e571]
+              - cell "CEO Agent" [ref=e572]:
+                - generic [ref=e573]: CEO Agent
+              - cell "Awake" [ref=e574]:
+                - generic [ref=e577]: Awake
+              - cell "—" [ref=e578]
+              - cell "Inspect" [ref=e579]:
+                - button "Inspect" [ref=e580]
+            - row "AGT-006 FLUX-46 CEO Agent Awake — Inspect" [ref=e581] [cursor=pointer]:
+              - cell "AGT-006" [ref=e582]
+              - cell "FLUX-46" [ref=e583]
+              - cell "CEO Agent" [ref=e584]:
+                - generic [ref=e585]: CEO Agent
+              - cell "Awake" [ref=e586]:
+                - generic [ref=e589]: Awake
+              - cell "—" [ref=e590]
+              - cell "Inspect" [ref=e591]:
+                - button "Inspect" [ref=e592]
+            - row "AGT-007 HELIX-53 CEO Agent Awake — Inspect" [ref=e593] [cursor=pointer]:
+              - cell "AGT-007" [ref=e594]
+              - cell "HELIX-53" [ref=e595]
+              - cell "CEO Agent" [ref=e596]:
+                - generic [ref=e597]: CEO Agent
+              - cell "Awake" [ref=e598]:
+                - generic [ref=e601]: Awake
+              - cell "—" [ref=e602]
+              - cell "Inspect" [ref=e603]:
+                - button "Inspect" [ref=e604]
+            - row "AGT-008 ORION-60 CEO Agent Awake — Inspect" [ref=e605] [cursor=pointer]:
+              - cell "AGT-008" [ref=e606]
+              - cell "ORION-60" [ref=e607]
+              - cell "CEO Agent" [ref=e608]:
+                - generic [ref=e609]: CEO Agent
+              - cell "Awake" [ref=e610]:
+                - generic [ref=e613]: Awake
+              - cell "—" [ref=e614]
+              - cell "Inspect" [ref=e615]:
+                - button "Inspect" [ref=e616]
+            - row "AGT-009 NOVA-67 CEO Agent Awake — Inspect" [ref=e617] [cursor=pointer]:
+              - cell "AGT-009" [ref=e618]
+              - cell "NOVA-67" [ref=e619]
+              - cell "CEO Agent" [ref=e620]:
+                - generic [ref=e621]: CEO Agent
+              - cell "Awake" [ref=e622]:
+                - generic [ref=e625]: Awake
+              - cell "—" [ref=e626]
+              - cell "Inspect" [ref=e627]:
+                - button "Inspect" [ref=e628]
+            - row "AGT-010 PRISM-74 CEO Agent Awake — Inspect" [ref=e629] [cursor=pointer]:
+              - cell "AGT-010" [ref=e630]
+              - cell "PRISM-74" [ref=e631]
+              - cell "CEO Agent" [ref=e632]:
+                - generic [ref=e633]: CEO Agent
+              - cell "Awake" [ref=e634]:
+                - generic [ref=e637]: Awake
+              - cell "—" [ref=e638]
+              - cell "Inspect" [ref=e639]:
+                - button "Inspect" [ref=e640]
+            - row "AGT-011 ECHO-81 CTO Agent Awake — Inspect" [ref=e641] [cursor=pointer]:
+              - cell "AGT-011" [ref=e642]
+              - cell "ECHO-81" [ref=e643]
+              - cell "CTO Agent" [ref=e644]:
+                - generic [ref=e645]: CTO Agent
+              - cell "Awake" [ref=e646]:
+                - generic [ref=e649]: Awake
+              - cell "—" [ref=e650]
+              - cell "Inspect" [ref=e651]:
+                - button "Inspect" [ref=e652]
+            - row "AGT-012 SIGMA-88 CTO Agent Awake — Inspect" [ref=e653] [cursor=pointer]:
+              - cell "AGT-012" [ref=e654]
+              - cell "SIGMA-88" [ref=e655]
+              - cell "CTO Agent" [ref=e656]:
+                - generic [ref=e657]: CTO Agent
+              - cell "Awake" [ref=e658]:
+                - generic [ref=e661]: Awake
+              - cell "—" [ref=e662]
+              - cell "Inspect" [ref=e663]:
+                - button "Inspect" [ref=e664]
+            - row "AGT-013 DELTA-95 CTO Agent Awake — Inspect" [ref=e665] [cursor=pointer]:
+              - cell "AGT-013" [ref=e666]
+              - cell "DELTA-95" [ref=e667]
+              - cell "CTO Agent" [ref=e668]:
+                - generic [ref=e669]: CTO Agent
+              - cell "Awake" [ref=e670]:
+                - generic [ref=e673]: Awake
+              - cell "—" [ref=e674]
+              - cell "Inspect" [ref=e675]:
+                - button "Inspect" [ref=e676]
+            - row "AGT-014 TITAN-3 CTO Agent Awake — Inspect" [ref=e677] [cursor=pointer]:
+              - cell "AGT-014" [ref=e678]
+              - cell "TITAN-3" [ref=e679]
+              - cell "CTO Agent" [ref=e680]:
+                - generic [ref=e681]: CTO Agent
+              - cell "Awake" [ref=e682]:
+                - generic [ref=e685]: Awake
+              - cell "—" [ref=e686]
+              - cell "Inspect" [ref=e687]:
+                - button "Inspect" [ref=e688]
+            - row "AGT-015 ARIA-10 CTO Agent Awake — Inspect" [ref=e689] [cursor=pointer]:
+              - cell "AGT-015" [ref=e690]
+              - cell "ARIA-10" [ref=e691]
+              - cell "CTO Agent" [ref=e692]:
+                - generic [ref=e693]: CTO Agent
+              - cell "Awake" [ref=e694]:
+                - generic [ref=e697]: Awake
+              - cell "—" [ref=e698]
+              - cell "Inspect" [ref=e699]:
+                - button "Inspect" [ref=e700]
+            - row "AGT-016 LYRA-17 CTO Agent Awake — Inspect" [ref=e701] [cursor=pointer]:
+              - cell "AGT-016" [ref=e702]
+              - cell "LYRA-17" [ref=e703]
+              - cell "CTO Agent" [ref=e704]:
+                - generic [ref=e705]: CTO Agent
+              - cell "Awake" [ref=e706]:
+                - generic [ref=e709]: Awake
+              - cell "—" [ref=e710]
+              - cell "Inspect" [ref=e711]:
+                - button "Inspect" [ref=e712]
+            - row "AGT-017 VEGA-24 CTO Agent Awake — Inspect" [ref=e713] [cursor=pointer]:
+              - cell "AGT-017" [ref=e714]
+              - cell "VEGA-24" [ref=e715]
+              - cell "CTO Agent" [ref=e716]:
+                - generic [ref=e717]: CTO Agent
+              - cell "Awake" [ref=e718]:
+                - generic [ref=e721]: Awake
+              - cell "—" [ref=e722]
+              - cell "Inspect" [ref=e723]:
+                - button "Inspect" [ref=e724]
+            - row "AGT-018 ZETA-31 CTO Agent Awake — Inspect" [ref=e725] [cursor=pointer]:
+              - cell "AGT-018" [ref=e726]
+              - cell "ZETA-31" [ref=e727]
+              - cell "CTO Agent" [ref=e728]:
+                - generic [ref=e729]: CTO Agent
+              - cell "Awake" [ref=e730]:
+                - generic [ref=e733]: Awake
+              - cell "—" [ref=e734]
+              - cell "Inspect" [ref=e735]:
+                - button "Inspect" [ref=e736]
+            - row "AGT-019 KIRA-38 CTO Agent Awake — Inspect" [ref=e737] [cursor=pointer]:
+              - cell "AGT-019" [ref=e738]
+              - cell "KIRA-38" [ref=e739]
+              - cell "CTO Agent" [ref=e740]:
+                - generic [ref=e741]: CTO Agent
+              - cell "Awake" [ref=e742]:
+                - generic [ref=e745]: Awake
+              - cell "—" [ref=e746]
+              - cell "Inspect" [ref=e747]:
+                - button "Inspect" [ref=e748]
+            - row "AGT-020 NEON-45 CTO Agent Awake — Inspect" [ref=e749] [cursor=pointer]:
+              - cell "AGT-020" [ref=e750]
+              - cell "NEON-45" [ref=e751]
+              - cell "CTO Agent" [ref=e752]:
+                - generic [ref=e753]: CTO Agent
+              - cell "Awake" [ref=e754]:
+                - generic [ref=e757]: Awake
+              - cell "—" [ref=e758]
+              - cell "Inspect" [ref=e759]:
+                - button "Inspect" [ref=e760]
+            - row "AGT-021 BYTE-52 CTO Agent Awake — Inspect" [ref=e761] [cursor=pointer]:
+              - cell "AGT-021" [ref=e762]
+              - cell "BYTE-52" [ref=e763]
+              - cell "CTO Agent" [ref=e764]:
+                - generic [ref=e765]: CTO Agent
+              - cell "Awake" [ref=e766]:
+                - generic [ref=e769]: Awake
+              - cell "—" [ref=e770]
+              - cell "Inspect" [ref=e771]:
+                - button "Inspect" [ref=e772]
+            - row "AGT-022 VOLT-59 CTO Agent Awake — Inspect" [ref=e773] [cursor=pointer]:
+              - cell "AGT-022" [ref=e774]
+              - cell "VOLT-59" [ref=e775]
+              - cell "CTO Agent" [ref=e776]:
+                - generic [ref=e777]: CTO Agent
+              - cell "Awake" [ref=e778]:
+                - generic [ref=e781]: Awake
+              - cell "—" [ref=e782]
+              - cell "Inspect" [ref=e783]:
+                - button "Inspect" [ref=e784]
+            - row [ref=e785]:
+              - cell [ref=e786]

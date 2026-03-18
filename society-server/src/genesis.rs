@@ -5,7 +5,7 @@
 //! matrix of soul traits that are randomly combined with roles to produce
 //! unique agent identities on every spawn.
 
-use crate::agents::{AgentRuntime, AssembledPrompt, ProviderRoute};
+use crate::agents::{assemble_prompt, AgentRuntime, ProviderRoute};
 use society_core::{
     agent::{generate_agent_name, AgentTier, RoleProfile},
     AgentId, AgentRole, AgentStatus,
@@ -119,12 +119,8 @@ pub fn generate_random_agent(
     let id = AgentId::from_index(next_index);
     let name = generate_agent_name(next_index);
 
-    let prompt = AssembledPrompt {
-        system_prompt: format!(
-            "{}\n\n## Soul: {}\n{}",
-            profile.identity_prompt, soul.name, soul.prompt_fragment
-        ),
-    };
+    let soul_delta = format!("Soul Delta: {}\n{}", soul.name, soul.prompt_fragment);
+    let prompt = assemble_prompt(&profile, Some(&soul_delta), None, None, None);
 
     AgentRuntime {
         id,
@@ -135,6 +131,7 @@ pub fn generate_random_agent(
         prompt,
         memory_handle: None,
         thought_log: std::collections::VecDeque::with_capacity(20),
+        last_tick: 0,
         last_token_burn: 0,
     }
 }
@@ -182,7 +179,7 @@ mod tests {
         let agent = generate_random_agent(AgentTier::Citizen, 1001, &mut seed);
         assert_eq!(agent.id.as_str(), "AGT-1001");
         assert_eq!(agent.provider.tier, AgentTier::Citizen);
-        assert!(agent.prompt.system_prompt.contains("Soul:"));
+        assert!(agent.prompt.system_prompt.contains("Soul Delta"));
     }
 
     #[test]

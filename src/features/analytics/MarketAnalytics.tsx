@@ -1,7 +1,6 @@
 /**
  * @file MarketAnalytics.tsx
- * @description Renders the dashboard's realtime KPI cards, sentiment charts, and diagnostics panels.
- * @ai_context This view is the frontend projection for future Rust-authored `analytics.tick` events and derived market telemetry.
+ * @description Renders realtime KPI cards, sentiment charts, and engine telemetry.
  */
 import { memo, useMemo } from 'react';
 import {
@@ -9,9 +8,6 @@ import {
   Area,
   LineChart,
   Line,
-  BarChart,
-  Bar,
-  Cell,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -21,7 +17,7 @@ import {
 } from 'recharts';
 import { useShallow } from 'zustand/react/shallow';
 import { useWorldStore } from '../../store/useWorldStore';
-import { TrendingUp, Flame, Users, Activity, Cpu, BarChart2 } from 'lucide-react';
+import { TrendingUp, Flame, Users, Activity, Cpu } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
 const DARK_TOOLTIP = {
@@ -34,8 +30,6 @@ const DARK_TOOLTIP = {
 };
 const AXIS_TICK = { fill: '#52525b', fontSize: 10, fontFamily: 'monospace' };
 const GRID_COLOR = '#27272a';
-
-const BAR_COLORS = ['#10b981', '#06b6d4', '#f59e0b', '#a78bfa', '#fb923c', '#34d399'];
 
 interface KpiCardProps {
   icon: React.ElementType;
@@ -78,7 +72,7 @@ export const MarketAnalytics = memo(function MarketAnalytics() {
     }))
   );
 
-  const { latest, sentimentTrend, adoptionTrend, featureData } = useMemo(() => {
+  const { latest, sentimentTrend, adoptionTrend } = useMemo(() => {
     const latestPoint = analyticsData[analyticsData.length - 1];
     const previousPoint = analyticsData[analyticsData.length - 3];
     const positiveTrend = latestPoint && previousPoint && previousPoint.positive
@@ -88,28 +82,12 @@ export const MarketAnalytics = memo(function MarketAnalytics() {
       ? ((latestPoint.adoption - previousPoint.adoption) / previousPoint.adoption) * 100
       : 0;
 
-    // Feature adoption — server-derived base, proportionally distributed
-    const baseAdoption = latestPoint?.adoption ?? 0;
     return {
       latest: latestPoint,
       sentimentTrend: positiveTrend,
       adoptionTrend: nextAdoptionTrend,
-      featureData: [
-        { name: 'Adaptive Memory', value: baseAdoption },
-        { name: 'Tool Chaining', value: Math.round(baseAdoption * 0.85) },
-        { name: 'Multi-Modal', value: Math.round(baseAdoption * 0.6) },
-        { name: 'Peer Collab', value: Math.round(baseAdoption * 0.45) },
-        { name: 'Auto Schedule', value: Math.round(baseAdoption * 0.7) },
-        { name: 'Self Repair', value: Math.round(baseAdoption * 0.35) },
-      ],
     };
   }, [analyticsData]);
-
-  // ==========================================
-  // 🔗 [RUST-BINDING-POINT]: WEBSOCKET TARGET
-  // TODO (Backend Phase): Replace these client-derived view metrics with server-side analytics aggregations from `analytics.tick` events.
-  // Expected Payload: { type: 'analytics.tick', tick: number, positive: number, negative: number, tokens: number, adoption: number }
-  // ==========================================
 
   if (!isBootstrapped || analyticsData.length === 0) {
     return (
@@ -201,7 +179,7 @@ export const MarketAnalytics = memo(function MarketAnalytics() {
               />
               <Legend
                 wrapperStyle={{ fontSize: '10px', fontFamily: 'monospace', color: '#71717a', paddingTop: '8px' }}
-                formatter={(v) => v.toUpperCase()}
+                formatter={(value) => value.toUpperCase()}
               />
               <Area type="monotone" dataKey="positive" stroke="#10b981" strokeWidth={1.5} fill="url(#gPos)" name="Positive" dot={false} activeDot={{ r: 3, fill: '#10b981' }} />
               <Area type="monotone" dataKey="negative" stroke="#f43f5e" strokeWidth={1.5} fill="url(#gNeg)" name="Negative" dot={false} activeDot={{ r: 3, fill: '#f43f5e' }} />
@@ -240,26 +218,30 @@ export const MarketAnalytics = memo(function MarketAnalytics() {
 
         <div className="bg-zinc-900/50 border border-zinc-800 rounded-lg p-4">
           <div className="flex items-center gap-2 mb-4">
-            <BarChart2 className="w-3.5 h-3.5 text-amber-500" />
-            <span className="text-xs font-mono font-bold text-zinc-400 uppercase tracking-widest">Feature Adoption Rates</span>
+            <Users className="w-3.5 h-3.5 text-amber-500" />
+            <span className="text-xs font-mono font-bold text-zinc-400 uppercase tracking-widest">Adoption Signal</span>
           </div>
           <ResponsiveContainer width="100%" height={180}>
-            <BarChart data={featureData} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
+            <LineChart data={analyticsData} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
-              <XAxis dataKey="name" tick={{ fill: '#52525b', fontSize: 8, fontFamily: 'monospace' }} tickLine={false} axisLine={{ stroke: GRID_COLOR }} />
+              <XAxis dataKey="tick" tick={AXIS_TICK} tickLine={false} axisLine={{ stroke: GRID_COLOR }} />
               <YAxis tick={AXIS_TICK} tickLine={false} axisLine={false} />
               <Tooltip
                 contentStyle={DARK_TOOLTIP}
                 labelStyle={{ color: '#71717a', fontFamily: 'monospace', fontSize: '10px' }}
                 itemStyle={{ fontFamily: 'monospace', fontSize: '11px' }}
-                cursor={{ fill: 'rgba(255,255,255,0.03)' }}
+                cursor={{ stroke: '#3f3f46', strokeDasharray: '3 3' }}
               />
-              <Bar dataKey="value" name="Adoption %" radius={[2, 2, 0, 0]}>
-                {featureData.map((_, index) => (
-                  <Cell key={`cell-${index}`} fill={BAR_COLORS[index % BAR_COLORS.length]} />
-                ))}
-              </Bar>
-            </BarChart>
+              <Line
+                type="monotone"
+                dataKey="adoption"
+                stroke="#f59e0b"
+                strokeWidth={2}
+                dot={false}
+                activeDot={{ r: 4, fill: '#f59e0b', stroke: '#18181b', strokeWidth: 2 }}
+                name="Adoption %"
+              />
+            </LineChart>
           </ResponsiveContainer>
         </div>
       </div>
